@@ -1,0 +1,12 @@
+node_modules/
+.repo-cache/
+.next/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.test-tmp-*/
+.DS_Store

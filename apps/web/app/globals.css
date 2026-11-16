@@ -1,0 +1,5 @@
+@import "@workspace/ui/styles.css";
+@import "./product.css";
+
+@source "../**/*.{ts,tsx}";
+@source "../../../packages/ui/src/**/*.{ts,tsx}";

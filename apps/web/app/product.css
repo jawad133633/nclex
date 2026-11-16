@@ -105,6 +105,17 @@
 .step-number { color: #7163e0; font-size: 12px; font-weight: 800; letter-spacing: 1px; }
 .step-card h3 { margin: 15px 0 8px; color: #292a40; font-size: 15px; }
 .step-card p { max-width: 310px; margin: 0; color: #77798e; font-size: 12px; line-height: 1.75; }
+.faq-section { padding-top: 30px; padding-bottom: 76px; }
+.faq-section > div:first-child { margin-bottom: 22px; }
+.faq-section > div:first-child h2 { margin: 10px 0 8px; color: #23243b; font-size: clamp(30px, 3vw, 42px); font-weight: 730; line-height: 1.18; letter-spacing: -1.5px; }
+.faq-section > div:first-child p { margin: 0; color: #77798e; font-size: 14px; line-height: 1.8; }
+.faq-list { border-top: 1px solid #e7e5f0; }
+.faq-list details { border-bottom: 1px solid #e7e5f0; }
+.faq-list summary { min-height: 56px; display: flex; align-items: center; color: #3b3c53; cursor: pointer; font-size: 13px; font-weight: 650; list-style: none; }
+.faq-list summary::-webkit-details-marker { display: none; }
+.faq-list summary::after { width: 23px; height: 23px; margin-left: auto; display: grid; place-items: center; border-radius: 50%; color: #6759d5; background: #f0eeff; content: "+"; font-size: 17px; font-weight: 500; }
+.faq-list details[open] summary::after { content: "−"; }
+.faq-list details p { max-width: 760px; margin: -1px 32px 18px 0; color: #77798e; font-size: 12px; line-height: 1.7; }
 .faq-band { max-width: 1230px; margin: 0 auto 75px; padding: 45px 53px; display: flex; align-items: center; justify-content: space-between; gap: 40px; border-radius: 24px; color: #fff; background: linear-gradient(115deg, #6658df, #5145c4 68%, #483eb0); }
 .faq-band .section-kicker { color: #d5d1ff; }
 .faq-band h2 { max-width: 720px; margin: 10px 0; color: #fff; font-size: 29px; }
@@ -152,8 +163,10 @@
 .preview-notice { min-height: 38px; margin-bottom: 22px; padding: 9px 13px; display: flex; align-items: center; gap: 9px; border: 1px solid #ffffff59; border-radius: 9px; color: #fff; background: #ffffff16; font-size: 10px; }
 .welcome-row { margin-bottom: 22px; display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
 .welcome-eyebrow { font-size: 9px; letter-spacing: 1px; }
+.portal-content .welcome-eyebrow { color: #e2deff; }
+.admin-portal .portal-content .welcome-eyebrow { color: #e6dcff; }
 .welcome-row h1 { margin: 8px 0 5px; color: #fff; font-size: clamp(23px, 2.5vw, 30px); letter-spacing: -.8px; }
-.welcome-row h1 .sun-glyph { margin-left: 6px; vertical-align: -2px; color: #e7a843; }
+.welcome-row h1 .sun-glyph { display: inline-block; margin-left: 6px; vertical-align: -5px; color: #e7a843; }
 .welcome-row p { margin: 0; color: #e5e2ff; font-size: 11px; }
 .portal-button { min-height: 39px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 13px; border: 0; border-radius: 9px; font-size: 10px; font-weight: 700; text-decoration: none; transition: transform .2s ease, box-shadow .2s ease; }
 .portal-button-primary { color: #fff; background: #6b5de2; box-shadow: 0 6px 15px #6859df30; }
@@ -339,6 +352,8 @@
   .workspace-preview-card { border-radius: 12px; }
   .faq-band { margin: 0 10px 47px; padding: 28px 22px; flex-direction: column; align-items: flex-start; gap: 19px; }
   .faq-band h2 { font-size: 25px; }
+  .faq-section { padding-top: 13px; padding-bottom: 55px; }
+  .faq-section > div:first-child h2 { font-size: 30px; }
   .marketing-footer { padding: 22px 18px 29px; flex-wrap: wrap; }
   .marketing-footer p { order: 3; flex-basis: 100%; margin: -5px 0 0; }
   .footer-caption { font-size: 9px; }
@@ -377,8 +392,11 @@
   .week-days { gap: 4px; }
   .week-days i { width: 14px; height: 14px; }
   .admin-lower-grid { grid-template-columns: 1fr; }
-  .admin-table-wrap { overflow-x: auto; }
-  .admin-content-table { min-width: 580px; }
+  .admin-table-wrap { overflow-x: visible; }
+  .admin-content-table { min-width: 0; white-space: normal; }
+  .admin-content-table th, .admin-content-table td { padding-right: 5px; padding-left: 5px; }
+  .admin-content-table th:nth-child(2), .admin-content-table td:nth-child(2), .admin-content-table th:nth-child(5), .admin-content-table td:nth-child(5) { display: none; }
+  .admin-content-table tbody th { white-space: normal; }
   .admin-table-foot { align-items: flex-start; flex-direction: column; padding: 9px 0; }
   .portal-footer { font-size: 7px; }
 }

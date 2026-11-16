@@ -35,7 +35,7 @@ const AdminDashboard = (): ReactElement => (
         ))}
       </nav>
       <div className="sidebar-spacer" />
-      <a className="portal-menu-link" href="#help"><CircleHelp size={17} /><span>Admin guide</span></a>
+      <a className="portal-menu-link" href="#help"><CircleHelp size={17} /><span className="portal-menu-label">Admin guide</span></a>
       <div className="sidebar-profile"><div className="profile-avatar admin-avatar">AD</div><div><strong>Content admin</strong><small>Example account</small></div><Settings2 aria-hidden="true" className="profile-settings" size={16} /></div>
       <Link className="sidebar-home-link" href="/">← Back to NCLEXLab</Link>
     </aside>
@@ -43,7 +43,7 @@ const AdminDashboard = (): ReactElement => (
     <section className="portal-main" id="overview">
       <header className="portal-topbar">
         <div className="breadcrumb">Admin workspace <ChevronRight size={14} /> <strong>Overview</strong></div>
-        <div className="topbar-actions"><span className="preview-badge admin-preview-badge"><span /> Visual preview</span><button aria-label="Search admin workspace" className="icon-button" type="button"><Search size={18} /></button><div className="topbar-avatar admin-avatar">AD</div></div>
+        <div className="topbar-actions"><span className="preview-badge admin-preview-badge"><span /> Visual preview</span><span aria-hidden="true" className="icon-button"><Search size={18} /></span><div className="topbar-avatar admin-avatar">AD</div></div>
       </header>
 
       <div className="portal-content">

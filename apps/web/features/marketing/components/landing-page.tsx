@@ -37,7 +37,7 @@ const LandingPage = (): ReactElement => (
       <nav aria-label="Main navigation" className="marketing-links">
         <a href="#approach">Our approach</a>
         <a href="#tools">Study tools</a>
-        <a href="#questions">Common questions</a>
+        <a href="#questions">FAQs</a>
       </nav>
       <div className="marketing-nav-actions">
         <Link className="text-link" href="/student">Student preview</Link>
@@ -130,10 +130,23 @@ const LandingPage = (): ReactElement => (
       </div>
     </section>
 
-    <section aria-labelledby="questions-title" className="faq-band" id="questions">
+    <section aria-labelledby="questions-title" className="section faq-section" id="questions">
       <div>
         <span className="section-kicker">A little more clarity</span>
-        <h2 id="questions-title">Preparing can feel like a lot. Your next step does not have to.</h2>
+        <h2 id="questions-title">Common questions</h2>
+        <p>Clear answers to help you decide how NCLEXLab fits into your study routine.</p>
+      </div>
+      <div className="faq-list">
+        <details><summary>What can I do with NCLEXLab?</summary><p>NCLEXLab is designed to bring practice questions, learning resources, study planning, and progress review into one place. Features shown in this preview are still being built.</p></details>
+        <details><summary>Can I make a study plan around my schedule?</summary><p>The study experience is being planned to support flexible study routines. The schedule builder is not connected in this preview.</p></details>
+        <details><summary>Does using NCLEXLab guarantee that I will pass?</summary><p>No study resource can guarantee an exam result. NCLEXLab is intended to support preparation with practice and review.</p></details>
+      </div>
+    </section>
+
+    <section aria-label="Explore the NCLEXLab preview" className="faq-band">
+      <div>
+        <span className="section-kicker">A little more clarity</span>
+        <h2>Preparing can feel like a lot. Your next step does not have to.</h2>
         <p>Explore the student workspace preview to see how NCLEXLab brings the pieces of study together.</p>
       </div>
       <Link className="button button-light" href="/student">Explore the preview <ArrowRight size={17} /></Link>

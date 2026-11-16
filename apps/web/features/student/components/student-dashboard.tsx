@@ -38,7 +38,7 @@ const StudentDashboard = (): ReactElement => (
         ))}
       </nav>
       <div className="sidebar-spacer" />
-      <a className="portal-menu-link" href="#help"><CircleHelp size={17} /><span>Help center</span></a>
+      <a className="portal-menu-link" href="#help"><CircleHelp size={17} /><span className="portal-menu-label">Help center</span></a>
       <div className="sidebar-profile">
         <div className="profile-avatar">JS</div>
         <div><strong>Jordan Student</strong><small>NCLEX-RN prep</small></div>
@@ -50,7 +50,7 @@ const StudentDashboard = (): ReactElement => (
     <section className="portal-main" id="home">
       <header className="portal-topbar">
         <div className="breadcrumb">Student workspace <ChevronRight size={14} /> <strong>Home</strong></div>
-        <div className="topbar-actions"><span className="preview-badge"><span /> Preview · sample data</span><button aria-label="Search student workspace" className="icon-button" type="button"><Search size={18} /></button><div className="topbar-avatar">JS</div></div>
+        <div className="topbar-actions"><span className="preview-badge"><span /> Preview · sample data</span><span aria-hidden="true" className="icon-button"><Search size={18} /></span><div className="topbar-avatar">JS</div></div>
       </header>
 
       <div className="portal-content">

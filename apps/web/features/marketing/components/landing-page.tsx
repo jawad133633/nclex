@@ -1,164 +1,167 @@
 import type { ReactElement } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, BookOpenCheck, ClipboardCheck, HeartPulse, ListChecks, Sparkles } from "lucide-react";
+import {
+  ArrowRight, BookOpenCheck, CalendarDays, ChartNoAxesColumnIncreasing, Check,
+  ChevronDown, CirclePlay, ClipboardCheck, GraduationCap, HeartPulse, Menu, ShieldCheck, Sparkles
+} from "lucide-react";
 
-const benefits = [
-  {
-    icon: ClipboardCheck,
-    title: "Practice with purpose",
-    description: "Build a steady question habit and make room to think through each choice."
-  },
-  {
-    icon: BookOpenCheck,
-    title: "Understand the why",
-    description: "Use clear explanations to turn practice into learning you can carry forward."
-  },
-  {
-    icon: ListChecks,
-    title: "Know what comes next",
-    description: "Bring questions, review, and a flexible study plan into one focused space."
-  }
+const quickTools = [
+  { icon: CirclePlay, label: "Video lessons" },
+  { icon: ClipboardCheck, label: "Question practice" },
+  { icon: BookOpenCheck, label: "Topic review" },
+  { icon: ChartNoAxesColumnIncreasing, label: "Study progress" }
 ] as const;
 
-const steps = [
-  { number: "01", title: "Choose a place to begin", text: "Start with a subject, a question set, or the next item in your study plan." },
-  { number: "02", title: "Practice your thinking", text: "Work through nursing scenarios one step at a time." },
-  { number: "03", title: "Review and keep moving", text: "Learn from explanations and return to the topics you want to strengthen." }
+const studySteps = [
+  { number: "01", title: "Pick a place to start", text: "Choose a subject or continue from your study plan." },
+  { number: "02", title: "Practice one step at a time", text: "Work through questions and give yourself room to think." },
+  { number: "03", title: "Review what you learned", text: "Use explanations and resources to guide your next session." }
 ] as const;
 
 const LandingPage = (): ReactElement => (
-  <main className="marketing-page">
-    <header className="marketing-nav">
-      <Link aria-label="NCLEXLab home" className="brand-lockup" href="/">
-        <span aria-hidden="true" className="brand-mark"><HeartPulse size={21} strokeWidth={2.4} /></span>
-        <span>NCLEX<span className="brand-accent">Lab</span></span>
-      </Link>
-      <nav aria-label="Main navigation" className="marketing-links">
-        <a href="#approach">Our approach</a>
-        <a href="#tools">Study tools</a>
-        <a href="#questions">FAQs</a>
-      </nav>
-      <div className="marketing-nav-actions">
-        <Link className="text-link" href="/student">Student preview</Link>
-        <Link className="button button-small button-primary" href="/student">Explore NCLEXLab <ArrowRight size={16} /></Link>
-      </div>
-    </header>
+  <main className="lp-page">
+    <section className="lp-hero-wrap" id="home">
+      <header className="lp-header">
+        <Link aria-label="NCLEXLab home" className="lp-logo" href="/">
+          <span aria-hidden="true" className="lp-logo-icon"><GraduationCap size={27} /><HeartPulse size={14} /></span>
+          <span className="lp-logo-wordmark">NCLEX<span>Lab</span><small>Study · Practice · Grow</small></span>
+        </Link>
+        <nav aria-label="Main navigation" className="lp-nav-links">
+          <a className="lp-nav-active" href="#home"><HeartPulse size={15} /> Home</a>
+          <a href="#features">Features <ChevronDown size={14} /></a>
+          <a href="#resources">Resources <ChevronDown size={14} /></a>
+          <a href="#student-stories">Why NCLEXLab</a>
+          <a href="#get-started">Get started</a>
+          <a href="#faq">FAQ</a>
+        </nav>
+        <div className="lp-header-actions">
+          <Link className="lp-login" href="/student"><span className="lp-user-dot">J</span> Student preview</Link>
+          <Link className="lp-button lp-button-glow lp-header-cta" href="/student">Start studying <ArrowRight size={17} /></Link>
+        </div>
+        <details className="lp-mobile-menu">
+          <summary aria-label="Open navigation"><Menu size={22} /></summary>
+          <nav aria-label="Mobile navigation">
+            <a href="#features">Features</a><a href="#resources">Resources</a><a href="#student-stories">Why NCLEXLab</a><a href="#faq">FAQ</a><Link href="/student">Student preview</Link>
+          </nav>
+        </details>
+      </header>
 
-    <section aria-labelledby="hero-title" className="hero-section">
-      <div className="hero-copy">
-        <div className="eyebrow"><Sparkles size={15} /> A calmer way to prepare</div>
-        <h1 id="hero-title">Your NCLEX journey, <span>one confident step at a time.</span></h1>
-        <p className="hero-lede">Practice nursing questions, understand the reasoning, and shape a study plan that works for your life.</p>
-        <div className="hero-actions">
-          <Link className="button button-primary" href="/student">Explore the student workspace <ArrowRight size={17} /></Link>
-          <a className="button button-quiet" href="#approach">See how it works</a>
+      <div className="lp-hero-grid">
+        <div className="lp-hero-copy">
+          <div className="lp-update-pill"><Sparkles size={15} /> A clearer way to prepare for the NCLEX-RN</div>
+          <h1>Prepare for the <span>NCLEX-RN.</span><br /><em>One step at a time.</em></h1>
+          <p className="lp-hero-lede">Practice nursing questions, understand the reasoning, and build a study routine that fits your life.</p>
+          <div className="lp-hero-buttons">
+            <Link className="lp-button lp-button-glow" href="/student"><GraduationCap size={18} /> Explore the student workspace <ArrowRight size={17} /></Link>
+            <a className="lp-button lp-button-outline" href="#how-it-works"><CirclePlay size={19} /> See how it works</a>
+          </div>
+          <div className="lp-quick-tools">
+            {quickTools.map(({ icon: Icon, label }) => <div className="lp-quick-tool" key={label}><span><Icon size={19} /></span><small>{label}</small></div>)}
+          </div>
         </div>
-        <div className="hero-note"><span className="note-dot" /> Practice, review, and plan in one focused space.</div>
+
+        <div className="lp-hero-visual" aria-label="A preview of NCLEXLab learning tools">
+          <div aria-hidden="true" className="lp-hero-glow lp-hero-glow-one" />
+          <div aria-hidden="true" className="lp-hero-glow lp-hero-glow-two" />
+          <div className="lp-hero-nurse-frame"><Image alt="Nursing student preparing for the NCLEX with a study book" className="lp-hero-nurse" fill priority sizes="(max-width: 760px) 78vw, 36vw" src="/images/nursing-student.jpg" /></div>
+          <div className="lp-career-note"><span>Your next chapter</span><strong>starts here.</strong><i /></div>
+          <div className="lp-hero-video-card">
+            <Image alt="NCLEXLab video lesson preview" fill sizes="(max-width: 760px) 65vw, 24vw" src="/images/video-learning-preview.jpeg" />
+            <span className="lp-video-play"><CirclePlay size={44} fill="currentColor" /></span>
+          </div>
+          <div className="lp-hero-phone" aria-label="Sample mobile study session preview">
+            <div className="lp-phone-speaker" />
+            <div className="lp-phone-brand"><span><HeartPulse size={13} /></span> NCLEXLab</div>
+            <div className="lp-phone-progress"><i /></div>
+            <small>STUDY SESSION</small>
+            <strong>What would you like to work on?</strong>
+            <div className="lp-phone-choice"><BookOpenCheck size={13} /> Practice questions <ArrowRight size={12} /></div>
+            <div className="lp-phone-choice"><CalendarDays size={13} /> Study plan <ArrowRight size={12} /></div>
+            <div className="lp-phone-choice"><ChartNoAxesColumnIncreasing size={13} /> Review progress <ArrowRight size={12} /></div>
+          </div>
+          <div className="lp-floating-note"><span><Check size={15} /></span><strong>Learn at your pace</strong></div>
+        </div>
       </div>
-      <div className="hero-art">
-        <div className="hero-image-frame">
-          <Image alt="Nursing student reviewing a textbook while preparing for the NCLEX" className="hero-photo" fill priority sizes="(max-width: 800px) 90vw, 42vw" src="/images/nursing-student.jpg" />
-        </div>
-        <div className="hero-float-card">
-          <span className="float-icon"><BookOpenCheck size={18} /></span>
-          <span><strong>Learn as you practice</strong><small>Make each question count</small></span>
-        </div>
-        <div aria-hidden="true" className="hero-orbit orbit-one" />
-        <div aria-hidden="true" className="hero-orbit orbit-two" />
-      </div>
-      <div aria-hidden="true" className="hero-bottom-wash" />
+      <div className="lp-hero-bottom-line" />
     </section>
 
-    <section aria-label="NCLEXLab study approach" className="promise-strip">
-      <span>Made for the way nursing students study</span>
+    <section aria-label="NCLEXLab learning tools" className="lp-trust-strip">
+      <div><span><ClipboardCheck size={20} /></span><p><strong>Practice questions</strong><small>Build a steady question habit</small></p></div>
       <i />
-      <span>Clear practice</span><i />
-      <span>Useful explanations</span><i />
-      <span>A plan that can flex</span>
+      <div><span><BookOpenCheck size={20} /></span><p><strong>Clear explanations</strong><small>Learn the reasoning behind answers</small></p></div>
+      <i />
+      <div><span><CalendarDays size={20} /></span><p><strong>Flexible study planning</strong><small>Make room for real life</small></p></div>
     </section>
 
-    <section aria-labelledby="approach-title" className="section section-approach" id="approach">
-      <div className="section-heading">
-        <span className="section-kicker">A steady path forward</span>
-        <h2 id="approach-title">Good preparation is more than getting through questions.</h2>
-        <p>It is knowing what you are practicing, learning from your answers, and finding a next step that feels manageable.</p>
+    <section aria-labelledby="lp-practice-title" className="lp-section lp-practice-section" id="features">
+      <div className="lp-section-copy">
+        <span className="lp-section-kicker">PRACTICE WITH PURPOSE</span>
+        <h2 id="lp-practice-title">Questions are a start.<br /><span>Understanding is the goal.</span></h2>
+        <p>Use practice to build your thinking, then review explanations that help connect the answer to the concept.</p>
+        <ul className="lp-check-list"><li><Check size={16} /> Practice in focused study sessions</li><li><Check size={16} /> Review why an answer makes sense</li><li><Check size={16} /> Return to topics when you need another look</li></ul>
+        <Link className="lp-text-link" href="/student">Explore student practice <ArrowRight size={17} /></Link>
       </div>
-      <div className="benefit-grid" id="tools">
-        {benefits.map(({ description, icon: Icon, title }, index) => (
-          <article className="benefit-card" key={title}>
-            <div className={`benefit-icon benefit-icon-${index + 1}`}><Icon aria-hidden="true" size={22} /></div>
-            <span className="card-index">0{index + 1}</span>
-            <h3>{title}</h3>
-            <p>{description}</p>
-          </article>
-        ))}
-      </div>
-    </section>
-
-    <section aria-labelledby="workspace-title" className="workspace-section">
-      <div className="workspace-copy">
-        <span className="section-kicker">One focused workspace</span>
-        <h2 id="workspace-title">Spend less time wondering what to do next.</h2>
-        <p>Move naturally between your study plan, subjects, practice questions, and review. Keep your attention on learning—not juggling tabs.</p>
-        <ul className="check-list">
-          <li><span><ListChecks size={17} /></span> A clear next step for each study session</li>
-          <li><span><BookOpenCheck size={17} /></span> Practice and explanations close together</li>
-          <li><span><HeartPulse size={17} /></span> A familiar rhythm across your subjects</li>
-        </ul>
-        <Link className="inline-link" href="/student">Take a look inside <ArrowRight size={17} /></Link>
-      </div>
-      <div className="workspace-preview-card">
-        <div className="preview-window-bar"><span /><span /><span /><small>NCLEXLab · Student workspace preview</small></div>
-        <Image alt="Preview of the NCLEXLab student dashboard with study schedule and subject areas" className="workspace-preview-image" height={1000} src="/images/student-dashboard-preview.png" width={1500} />
+      <div className="lp-question-preview">
+        <div className="lp-question-top"><span><ClipboardCheck size={16} /> PRACTICE PREVIEW</span><small>Example learning flow</small></div>
+        <div className="lp-question-progress"><i /></div>
+        <div className="lp-question-body"><span className="lp-question-tag">CLINICAL JUDGMENT</span><h3>Pause, think through the situation, and choose your next step.</h3><p>This preview shows how a practice session can present a question and follow it with a clear review.</p></div>
+        <div className="lp-answer-row"><span>A</span><i /> Select an answer to continue</div>
+        <div className="lp-answer-row"><span>B</span><i /> Review the full scenario</div>
+        <div className="lp-answer-row"><span>C</span><i /> Compare your reasoning</div>
+        <div className="lp-rationale-preview"><span><Sparkles size={16} /></span><div><strong>Review the reasoning</strong><small>Learn from the explanation after each practice session.</small></div></div>
       </div>
     </section>
 
-    <section aria-labelledby="steps-title" className="section steps-section">
-      <div className="section-heading section-heading-center">
-        <span className="section-kicker">A simple study rhythm</span>
-        <h2 id="steps-title">Start where you are. Keep building.</h2>
-      </div>
-      <div className="steps-grid">
-        {steps.map(({ number, text, title }) => (
-          <article className="step-card" key={number}>
-            <span className="step-number">{number}</span>
-            <h3>{title}</h3>
-            <p>{text}</p>
-          </article>
-        ))}
+    <section className="lp-video-band" id="resources">
+      <div className="lp-video-asset"><Image alt="Preview of a short nursing lesson with visual teaching aids" fill sizes="(max-width: 760px) 90vw, 48vw" src="/images/video-learning-preview.jpeg" /><span><CirclePlay size={48} fill="currentColor" /></span></div>
+      <div className="lp-video-copy"><span className="lp-section-kicker">SHORT LESSONS, USEFUL REVIEW</span><h2>Make complex topics <em>easier to revisit.</em></h2><p>Use focused video lessons and visual study resources to refresh key concepts in your own study rhythm.</p><ul className="lp-dark-checks"><li><Check size={16} /> Topic-focused video learning</li><li><Check size={16} /> Study aids for quick review</li><li><Check size={16} /> Resources alongside your practice</li></ul><Link className="lp-button lp-button-glow" href="/student">Explore learning resources <ArrowRight size={16} /></Link></div>
+    </section>
+
+    <section aria-labelledby="lp-case-title" className="lp-section lp-case-section" id="how-it-works">
+      <div className="lp-case-copy"><span className="lp-section-kicker">THINK THROUGH THE SCENARIO</span><h2 id="lp-case-title">Build your nursing judgment, <span>one case at a time.</span></h2><p>Clinical case practice gives you a place to slow down, review the details, and connect information as you learn.</p><Link className="lp-button lp-button-dark" href="/student">See the student experience <ArrowRight size={16} /></Link><div className="lp-case-points"><span><Check size={15} /> Work through a scenario</span><span><Check size={15} /> Review the key information</span><span><Check size={15} /> Learn from the feedback</span></div></div>
+      <div className="lp-case-asset"><Image alt="Illustrative case-study learning interface for nursing students" fill sizes="(max-width: 760px) 92vw, 56vw" src="/images/case-study-preview.jpeg" /></div>
+    </section>
+
+    <section className="lp-resource-section">
+      <div className="lp-resource-asset"><Image alt="Visual study resources for nursing topics" fill sizes="(max-width: 760px) 90vw, 48vw" src="/images/cheat-sheet-preview.jpeg" /></div>
+      <div className="lp-resource-copy"><span className="lp-section-kicker">REVIEW THE WAY THAT WORKS FOR YOU</span><h2>Keep helpful study resources <span>close at hand.</span></h2><p>Revisit topics with concise visual aids, focused lessons, and a study plan that helps you find your next step.</p><Link className="lp-text-link" href="/student">Browse the learning workspace <ArrowRight size={17} /></Link><div className="lp-resource-chips"><span>Cheat sheets</span><span>Video lessons</span><span>Study schedule</span></div></div>
+    </section>
+
+    <section aria-labelledby="lp-plan-title" className="lp-plan-section">
+      <div className="lp-plan-copy"><span className="lp-section-kicker">A PLAN THAT CAN FLEX</span><h2 id="lp-plan-title">Make a study plan <span>that fits your life.</span></h2><p>Turn a big exam goal into a sequence of manageable study sessions. Adjust your plan when your week changes.</p><Link className="lp-button lp-button-glow" href="/student">Explore study planning <ArrowRight size={16} /></Link></div>
+      <div className="lp-plan-asset"><Image alt="Personalized study schedule and progress preview" fill sizes="(max-width: 760px) 92vw, 57vw" src="/images/study-plan-preview.jpeg" /></div>
+    </section>
+
+    <section aria-labelledby="lp-how-title" className="lp-how-section" id="student-stories">
+      <div className="lp-centered-heading"><span className="lp-section-kicker">A SIMPLE STUDY RHYTHM</span><h2 id="lp-how-title">A clearer path from <span>today to test day.</span></h2><p>Keep the pieces of preparation together and focus on the next useful step.</p></div>
+      <div className="lp-step-grid">{studySteps.map(({ number, text, title }) => <article className="lp-step-card" key={number}><span>{number}</span><i /><h3>{title}</h3><p>{text}</p></article>)}</div>
+    </section>
+
+    <section aria-labelledby="lp-faq-title" className="lp-faq-section" id="faq">
+      <div className="lp-centered-heading"><span className="lp-section-kicker">GOOD TO KNOW</span><h2 id="lp-faq-title">Frequently asked <span>questions.</span></h2><p>Quick answers about the NCLEXLab study experience.</p></div>
+      <div className="lp-faq-grid">
+        <details><summary>What is NCLEXLab?</summary><p>NCLEXLab is being built as a study space for NCLEX-RN preparation, with practice, explanations, study resources, and planning tools.</p></details>
+        <details><summary>Can I choose what to study?</summary><p>The student workspace is designed to help learners move between subjects, practice, and review resources.</p></details>
+        <details><summary>Can I use a study schedule?</summary><p>A flexible schedule experience is part of the product plan. The current site preview does not save personal schedules yet.</p></details>
+        <details><summary>Does NCLEXLab guarantee an exam result?</summary><p>No. A study resource cannot guarantee an exam result. NCLEXLab is intended to support preparation and learning.</p></details>
+        <details><summary>Are the student pages ready to use?</summary><p>The student page currently shows a visual preview. Accounts, personal study history, and content are not connected yet.</p></details>
+        <details><summary>How do I see the student workspace?</summary><p>Open the student preview to explore the current dashboard design.</p></details>
       </div>
     </section>
 
-    <section aria-labelledby="questions-title" className="section faq-section" id="questions">
-      <div>
-        <span className="section-kicker">A little more clarity</span>
-        <h2 id="questions-title">Common questions</h2>
-        <p>Clear answers to help you decide how NCLEXLab fits into your study routine.</p>
-      </div>
-      <div className="faq-list">
-        <details><summary>What can I do with NCLEXLab?</summary><p>NCLEXLab is designed to bring practice questions, learning resources, study planning, and progress review into one place. Features shown in this preview are still being built.</p></details>
-        <details><summary>Can I make a study plan around my schedule?</summary><p>The study experience is being planned to support flexible study routines. The schedule builder is not connected in this preview.</p></details>
-        <details><summary>Does using NCLEXLab guarantee that I will pass?</summary><p>No study resource can guarantee an exam result. NCLEXLab is intended to support preparation with practice and review.</p></details>
-      </div>
+    <section aria-label="Start exploring NCLEXLab" className="lp-final-cta" id="get-started">
+      <div className="lp-final-mark"><GraduationCap size={44} /><HeartPulse size={25} /></div>
+      <div><span className="lp-section-kicker">YOUR NEXT STUDY SESSION STARTS HERE</span><h2>Build your preparation <em>one question at a time.</em></h2></div>
+      <Link className="lp-button lp-button-pink" href="/student">Explore NCLEXLab <ArrowRight size={17} /></Link>
     </section>
 
-    <section aria-label="Explore the NCLEXLab preview" className="faq-band">
-      <div>
-        <span className="section-kicker">A little more clarity</span>
-        <h2>Preparing can feel like a lot. Your next step does not have to.</h2>
-        <p>Explore the student workspace preview to see how NCLEXLab brings the pieces of study together.</p>
-      </div>
-      <Link className="button button-light" href="/student">Explore the preview <ArrowRight size={17} /></Link>
-    </section>
-
-    <footer className="marketing-footer">
-      <Link aria-label="NCLEXLab home" className="brand-lockup" href="/">
-        <span aria-hidden="true" className="brand-mark"><HeartPulse size={19} strokeWidth={2.4} /></span>
-        <span>NCLEX<span className="brand-accent">Lab</span></span>
-      </Link>
-      <p>Support for the work you are putting in.</p>
-      <span className="footer-caption">NCLEXLab · Learning experience preview</span>
+    <footer className="lp-footer">
+      <div className="lp-footer-brand"><Link aria-label="NCLEXLab home" className="lp-logo" href="/"><span aria-hidden="true" className="lp-logo-icon"><GraduationCap size={26} /><HeartPulse size={14} /></span><span className="lp-logo-wordmark">NCLEX<span>Lab</span><small>Study · Practice · Grow</small></span></Link><p>A focused space for your NCLEX-RN preparation journey.</p></div>
+      <div className="lp-footer-column"><strong>Explore</strong><a href="#features">Features</a><a href="#resources">Study resources</a><a href="#how-it-works">How it works</a></div>
+      <div className="lp-footer-column"><strong>Study</strong><a href="#features">Question practice</a><a href="#resources">Video lessons</a><a href="#faq">Study planning</a></div>
+      <div className="lp-footer-column"><strong>NCLEXLab</strong><a href="#student-stories">Our approach</a><a href="#faq">FAQ</a><Link href="/student">Student preview</Link></div>
+      <div className="lp-footer-bottom"><span>© 2026 NCLEXLab</span><span>Study · Practice · Grow</span></div>
     </footer>
   </main>
 );

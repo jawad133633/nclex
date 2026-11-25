@@ -4,6 +4,7 @@ import type { Logger } from "@workspace/logging";
 import { createApp, createServer } from "../bootstrap/index.js";
 import { ERROR_CODES, ERROR_MESSAGES, HTTP_STATUS } from "../constants/index.js";
 import type { ApiConfig } from "../types/index.js";
+import { createMongoDbIntegration } from "../integrations/index.js";
 
 const logger: Logger = {
   info: () => undefined,
@@ -17,9 +18,10 @@ const config: ApiConfig = {
   webOrigin: "http://localhost:3000",
   logLevel: "silent"
 };
+const database = createMongoDbIntegration({ logger });
 
 void test("unknown routes use the API error boundary", async (context) => {
-  const server = createServer({ app: createApp({ config, logger }), config, logger });
+  const server = createServer({ app: createApp({ config, logger, database }), config, logger });
   await server.start();
   context.after(async () => { await server.stop(); });
   const address = server.raw.address();

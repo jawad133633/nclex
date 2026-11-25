@@ -15,7 +15,7 @@ const database = createMongoDbIntegration({
   logger,
   ...(config.mongodbUri ? { uri: config.mongodbUri } : {})
 });
-const app = createApp({ config, logger });
+const app = createApp({ config, logger, database });
 const server = createServer({ app, config, logger });
 
 const shutdown = createShutdown({ database, logger, server });

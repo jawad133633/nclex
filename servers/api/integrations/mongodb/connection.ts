@@ -24,7 +24,11 @@ export const createMongoDbIntegration = ({
         logger.info("MongoDB connection is not configured; starting without persistence.");
         return Promise.resolve();
       },
-      disconnect: (): Promise<void> => Promise.resolve()
+      disconnect: (): Promise<void> => Promise.resolve(),
+      isConnected: (): boolean => false,
+      getCollection: <T extends Record<string, unknown>>(_name: string): mongoose.mongo.Collection<T> => {
+        throw new Error("MongoDB collection access is unavailable because MONGODB_URI is not configured.");
+      }
     });
   }
 
@@ -35,6 +39,8 @@ export const createMongoDbIntegration = ({
     },
     disconnect: async (): Promise<void> => {
       await client.disconnect();
-    }
+    },
+    isConnected: (): boolean => mongoose.connection.readyState === 1,
+    getCollection: <T extends Record<string, unknown>>(name: string): mongoose.mongo.Collection<T> => mongoose.connection.collection<T>(name)
   });
 };

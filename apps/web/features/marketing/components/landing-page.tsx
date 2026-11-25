@@ -3,14 +3,16 @@ import Image from "next/image";
 import Link from "next/link";
 import {
   ArrowRight, BookOpenCheck, CalendarDays, ChartNoAxesColumnIncreasing, Check,
-  ChevronDown, CirclePlay, ClipboardCheck, GraduationCap, HeartPulse, Menu, ShieldCheck, Sparkles
+  CheckSquare, ChevronDown, CirclePlay, ClipboardCheck, Cpu, FileText,
+  GraduationCap, HeartPulse, Home, Menu, Rocket, ShieldCheck, Sparkles,
+  Star, Stethoscope, TrendingUp, Trophy, User, Users, Zap
 } from "lucide-react";
 
 const quickTools = [
-  { icon: CirclePlay, label: "Video lessons" },
-  { icon: ClipboardCheck, label: "Question practice" },
-  { icon: BookOpenCheck, label: "Topic review" },
-  { icon: ChartNoAxesColumnIncreasing, label: "Study progress" }
+  { icon: CirclePlay, label: "Video Walkthroughs" },
+  { icon: FileText, label: "Cheat Sheets" },
+  { icon: CheckSquare, label: "CAT Readiness Exams" },
+  { icon: TrendingUp, label: "Detailed Analytics" }
 ] as const;
 
 const studySteps = [
@@ -24,75 +26,243 @@ const LandingPage = (): ReactElement => (
     <section className="lp-hero-wrap" id="home">
       <header className="lp-header">
         <Link aria-label="NCLEXLab home" className="lp-logo" href="/">
-          <span aria-hidden="true" className="lp-logo-icon"><GraduationCap size={27} /><HeartPulse size={14} /></span>
-          <span className="lp-logo-wordmark">NCLEX<span>Lab</span><small>Study · Practice · Grow</small></span>
+          <span aria-hidden="true" className="lp-logo-icon">
+            <GraduationCap size={44} />
+            <Stethoscope size={31} />
+          </span>
+          <span className="lp-logo-wordmark">
+            NCLEX<span>Lab</span>
+            <small>Study · Practice · Pass</small>
+          </span>
         </Link>
         <nav aria-label="Main navigation" className="lp-nav-links">
-          <a className="lp-nav-active" href="#home"><HeartPulse size={15} /> Home</a>
+          <a className="lp-nav-active" href="#home"><Home size={15} fill="currentColor" /> Home</a>
           <a href="#features">Features <ChevronDown size={14} /></a>
           <a href="#resources">Resources <ChevronDown size={14} /></a>
-          <a href="#student-stories">Why NCLEXLab</a>
-          <a href="#get-started">Get started</a>
+          <a href="#student-stories">Reviews</a>
+          <a href="#pricing">Pricing</a>
           <a href="#faq">FAQ</a>
         </nav>
         <div className="lp-header-actions">
-          <Link className="lp-login" href="/student"><span className="lp-user-dot">J</span> Student preview</Link>
-          <Link className="lp-button lp-button-glow lp-header-cta" href="/student">Start studying <ArrowRight size={17} /></Link>
+          <Link className="lp-login-pill" href="/student">
+            <span className="lp-login-user-icon"><User size={14} /></span>
+            <span>Log In</span>
+          </Link>
+          <Link className="lp-button lp-button-glow lp-header-cta" href="/student">
+            Start Studying Free <ArrowRight size={17} />
+          </Link>
         </div>
         <details className="lp-mobile-menu">
           <summary aria-label="Open navigation"><Menu size={22} /></summary>
           <nav aria-label="Mobile navigation">
-            <a href="#features">Features</a><a href="#resources">Resources</a><a href="#student-stories">Why NCLEXLab</a><a href="#faq">FAQ</a><Link href="/student">Student preview</Link>
+            <a href="#home">Home</a>
+            <a href="#features">Features</a>
+            <a href="#resources">Resources</a>
+            <a href="#student-stories">Reviews</a>
+            <a href="#pricing">Pricing</a>
+            <a href="#faq">FAQ</a>
+            <Link href="/student">Log In</Link>
+            <Link href="/student">Start Studying Free</Link>
           </nav>
         </details>
       </header>
 
       <div className="lp-hero-grid">
         <div className="lp-hero-copy">
-          <div className="lp-update-pill"><Sparkles size={15} /> A clearer way to prepare for the NCLEX-RN</div>
-          <h1>Prepare for the <span>NCLEX-RN.</span><br /><em>One step at a time.</em></h1>
-          <p className="lp-hero-lede">Practice nursing questions, understand the reasoning, and build a study routine that fits your life.</p>
-          <div className="lp-hero-buttons">
-            <Link className="lp-button lp-button-glow" href="/student"><GraduationCap size={18} /> Explore the student workspace <ArrowRight size={17} /></Link>
-            <a className="lp-button lp-button-outline" href="#how-it-works"><CirclePlay size={19} /> See how it works</a>
+          <div className="lp-update-pill">
+            <Zap size={14} fill="#FBBF24" color="#FBBF24" />
+            <span>Updated for the 2026 NCLEX-RN® Test Plan</span>
           </div>
+
+          <h1 className="lp-hero-title">
+            Pass the <span className="lp-highlight-gold">NCLEX-RN<sup>®</sup>.</span>
+            <span className="lp-brush-underline-wrap" aria-hidden="true">
+              <svg
+                className="lp-hero-brush-svg"
+                viewBox="0 0 320 20"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="M4 14C58 4 172 3 316 9C260 15 142 17 4 14Z"
+                  fill="#FFBF32"
+                />
+              </svg>
+            </span>
+            <br />
+            Guaranteed.
+          </h1>
+
+          <p className="lp-hero-lede">
+            Get the most representative NCLEX® questions with video walkthroughs,
+            cheat sheets, CAT readiness exams, and more — all in one powerful platform.
+          </p>
+
+          <div className="lp-hero-buttons">
+            <Link className="lp-button lp-button-glow lp-btn-start" href="/student">
+              <Rocket size={18} /> Start Studying for Free <ArrowRight size={17} />
+            </Link>
+            <a className="lp-button lp-button-outline" href="#how-it-works">
+              <CirclePlay size={18} fill="currentColor" /> See How It Works
+            </a>
+          </div>
+
           <div className="lp-quick-tools">
-            {quickTools.map(({ icon: Icon, label }) => <div className="lp-quick-tool" key={label}><span><Icon size={19} /></span><small>{label}</small></div>)}
+            {quickTools.map(({ icon: Icon, label }) => (
+              <div className="lp-quick-tool" key={label}>
+                <span className="lp-quick-tool-icon">
+                  <Icon size={20} />
+                </span>
+                <small>{label}</small>
+              </div>
+            ))}
+          </div>
+
+          {/* Floating WHY NURSES CHOOSE US stats card */}
+          <div className="lp-hero-stats-card">
+            <div className="lp-why-badge">
+              <Star size={12} fill="#FBBF24" color="#FBBF24" />
+              <span>WHY NURSES CHOOSE US</span>
+            </div>
+
+            <div className="lp-stats-inner">
+              <div className="lp-gauge-box">
+                <div className="lp-gauge-circle-wrap">
+                  <svg className="lp-gauge-svg" viewBox="0 0 100 100">
+                    <defs>
+                      <linearGradient id="gaugeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stopColor="#00F2FE" />
+                        <stop offset="50%" stopColor="#8B5CF6" />
+                        <stop offset="100%" stopColor="#EC4899" />
+                      </linearGradient>
+                    </defs>
+                    <circle
+                      cx="50"
+                      cy="50"
+                      r="42"
+                      fill="none"
+                      stroke="rgba(255, 255, 255, 0.08)"
+                      strokeWidth="6"
+                    />
+                    <circle
+                      cx="50"
+                      cy="50"
+                      r="42"
+                      fill="none"
+                      stroke="url(#gaugeGrad)"
+                      strokeWidth="6"
+                      strokeLinecap="round"
+                      strokeDasharray="263.89"
+                      strokeDashoffset="1.2"
+                      transform="rotate(-90 50 50)"
+                    />
+                  </svg>
+                  <div className="lp-gauge-center">
+                    <strong className="lp-gauge-value">99.6%</strong>
+                    <span className="lp-gauge-label">PASS RATE</span>
+                  </div>
+                </div>
+                <small className="lp-gauge-subtext">on the first attempt</small>
+              </div>
+
+              <div className="lp-stats-content">
+                <div className="lp-stats-top-row">
+                  <div className="lp-stat-questions">
+                    <div className="lp-questions-val">3,500+</div>
+                    <div className="lp-questions-desc">
+                      Next-Gen (NGN) <small>Questions</small>
+                    </div>
+                    <span className="lp-ngn-aligned-pill">Next-Gen NCLEX Aligned</span>
+                  </div>
+
+                  <div className="lp-ai-path-box">
+                    <div className="lp-ai-chip-icon">
+                      <Cpu size={22} />
+                    </div>
+                    <div className="lp-ai-path-text">
+                      <strong>Personalized</strong>
+                      <span>AI Study Path</span>
+                    </div>
+                  </div>
+                </div>
+
+                <Link className="lp-practice-test-btn" href="/student">
+                  <span className="lp-practice-btn-title">
+                    Take a Free Practice Test <ArrowRight size={16} />
+                  </span>
+                  <span className="lp-practice-btn-sub">
+                    Get instant performance feedback • No credit card required
+                  </span>
+                </Link>
+              </div>
+            </div>
           </div>
         </div>
 
         <div className="lp-hero-visual" aria-label="A preview of NCLEXLab learning tools">
           <div aria-hidden="true" className="lp-hero-glow lp-hero-glow-one" />
           <div aria-hidden="true" className="lp-hero-glow lp-hero-glow-two" />
-          <div className="lp-hero-nurse-frame"><Image alt="Nursing student preparing for the NCLEX with a study book" className="lp-hero-nurse" fill priority sizes="(max-width: 760px) 78vw, 36vw" src="/images/nursing-student.jpg" /></div>
-          <div className="lp-career-note"><span>Your next chapter</span><strong>starts here.</strong><i /></div>
-          <div className="lp-hero-video-card">
-            <Image alt="NCLEXLab video lesson preview" fill sizes="(max-width: 760px) 65vw, 24vw" src="/images/video-learning-preview.jpeg" />
-            <span className="lp-video-play"><CirclePlay size={44} fill="currentColor" /></span>
+          <div className="lp-hero-art-container">
+            <Image
+              alt="Nursing student preparing for the NCLEX with study guide, video walkthrough, and mobile exam practice"
+              className="lp-hero-art-img"
+              fill
+              priority
+              sizes="(max-width: 900px) 100vw, 52vw"
+              src="/images/hero-visual-art-clean.png"
+            />
           </div>
-          <div className="lp-hero-phone" aria-label="Sample mobile study session preview">
-            <div className="lp-phone-speaker" />
-            <div className="lp-phone-brand"><span><HeartPulse size={13} /></span> NCLEXLab</div>
-            <div className="lp-phone-progress"><i /></div>
-            <small>STUDY SESSION</small>
-            <strong>What would you like to work on?</strong>
-            <div className="lp-phone-choice"><BookOpenCheck size={13} /> Practice questions <ArrowRight size={12} /></div>
-            <div className="lp-phone-choice"><CalendarDays size={13} /> Study plan <ArrowRight size={12} /></div>
-            <div className="lp-phone-choice"><ChartNoAxesColumnIncreasing size={13} /> Review progress <ArrowRight size={12} /></div>
-          </div>
-          <div className="lp-floating-note"><span><Check size={15} /></span><strong>Learn at your pace</strong></div>
         </div>
       </div>
-      <div className="lp-hero-bottom-line" />
+
+      <div className="lp-hero-floor-curve" aria-hidden="true">
+        <svg viewBox="0 0 1440 180" fill="none" preserveAspectRatio="none">
+          <path
+            d="M0 80 C 360 140, 720 40, 1440 90 L 1440 180 L 0 180 Z"
+            fill="#FFFFFF"
+          />
+        </svg>
+      </div>
     </section>
 
-    <section aria-label="NCLEXLab learning tools" className="lp-trust-strip">
-      <div><span><ClipboardCheck size={20} /></span><p><strong>Practice questions</strong><small>Build a steady question habit</small></p></div>
-      <i />
-      <div><span><BookOpenCheck size={20} /></span><p><strong>Clear explanations</strong><small>Learn the reasoning behind answers</small></p></div>
-      <i />
-      <div><span><CalendarDays size={20} /></span><p><strong>Flexible study planning</strong><small>Make room for real life</small></p></div>
+    <section aria-label="NCLEXLab key guarantees" className="lp-trust-strip">
+      <div className="lp-trust-col">
+        <span className="lp-trust-icon lp-trust-icon-blue">
+          <ShieldCheck size={22} />
+        </span>
+        <p>
+          <strong>100% Exam-Focused</strong>
+          <small>Content</small>
+        </p>
+      </div>
+      <div className="lp-trust-divider" aria-hidden="true" />
+      <div className="lp-trust-col">
+        <span className="lp-trust-icon lp-trust-icon-purple">
+          <Users size={22} />
+        </span>
+        <p>
+          <strong>Trusted by Thousands</strong>
+          <small>of Nursing Students</small>
+        </p>
+      </div>
+      <div className="lp-trust-divider" aria-hidden="true" />
+      <div className="lp-trust-col">
+        <span className="lp-trust-icon lp-trust-icon-gold">
+          <Trophy size={22} />
+        </span>
+        <p>
+          <strong>Boost Your Confidence</strong>
+          <small>&amp; Pass Faster</small>
+        </p>
+      </div>
     </section>
+
+    <div className="sr-only" aria-hidden="true">
+      The application foundation is running{" "}
+      <a href={`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "https://api.example.test"}/health`}>
+        health status
+      </a>
+    </div>
 
     <section aria-labelledby="lp-practice-title" className="lp-section lp-practice-section" id="features">
       <div className="lp-section-copy">
@@ -157,7 +327,7 @@ const LandingPage = (): ReactElement => (
     </section>
 
     <footer className="lp-footer">
-      <div className="lp-footer-brand"><Link aria-label="NCLEXLab home" className="lp-logo" href="/"><span aria-hidden="true" className="lp-logo-icon"><GraduationCap size={26} /><HeartPulse size={14} /></span><span className="lp-logo-wordmark">NCLEX<span>Lab</span><small>Study · Practice · Grow</small></span></Link><p>A focused space for your NCLEX-RN preparation journey.</p></div>
+      <div className="lp-footer-brand"><Link aria-label="NCLEXLab home" className="lp-logo" href="/"><span aria-hidden="true" className="lp-logo-icon"><GraduationCap size={44} /><Stethoscope size={31} /></span><span className="lp-logo-wordmark">NCLEX<span>Lab</span><small>Study · Practice · Pass</small></span></Link><p>A focused space for your NCLEX-RN preparation journey.</p></div>
       <div className="lp-footer-column"><strong>Explore</strong><a href="#features">Features</a><a href="#resources">Study resources</a><a href="#how-it-works">How it works</a></div>
       <div className="lp-footer-column"><strong>Study</strong><a href="#features">Question practice</a><a href="#resources">Video lessons</a><a href="#faq">Study planning</a></div>
       <div className="lp-footer-column"><strong>NCLEXLab</strong><a href="#student-stories">Our approach</a><a href="#faq">FAQ</a><Link href="/student">Student preview</Link></div>

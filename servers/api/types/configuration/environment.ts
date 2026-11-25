@@ -9,5 +9,6 @@ export type ValidatedApiEnvironment = Readonly<{
   API_PORT: number;
   WEB_ORIGIN: string;
   MONGODB_URI?: string | undefined;
+  ADMIN_API_KEY?: string | undefined;
   LOG_LEVEL: LogLevel;
 }>;

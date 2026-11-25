@@ -4,7 +4,14 @@ import {
 import type { ValidatedWebEnvironment, WebEnvironmentSource } from "@/types";
 
 export const readWebEnvironment = (
-  source: WebEnvironmentSource = process.env
-): ValidatedWebEnvironment => validateWebEnvironment({
-  NEXT_PUBLIC_API_BASE_URL: source.NEXT_PUBLIC_API_BASE_URL
-});
+  source?: WebEnvironmentSource
+): ValidatedWebEnvironment => {
+  const runtimeEnvironment = source ?? process.env;
+  const localDevelopmentApiUrl = source === undefined && process.env.NODE_ENV === "development"
+    ? "http://127.0.0.1:4000"
+    : undefined;
+
+  return validateWebEnvironment({
+    NEXT_PUBLIC_API_BASE_URL: runtimeEnvironment.NEXT_PUBLIC_API_BASE_URL ?? localDevelopmentApiUrl
+  });
+};

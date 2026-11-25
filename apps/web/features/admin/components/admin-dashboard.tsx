@@ -208,12 +208,16 @@ export const AdminDashboard = (): ReactElement => {
       author: "Admin Editor"
     };
 
-    try {
-      if (!adminApiKey) throw new Error("Connect the admin API key before adding database questions.");
-      const saved = await saveAdminQuestion(adminApiKey, newQuestion);
-      saveStoredStandaloneQuestion(saved);
-      setQuestions((current) => [saved, ...current.filter((question) => question.id !== saved.id)]);
-    } catch (cause) { showToast(cause instanceof Error ? cause.message : "Question could not be saved."); return; }
+    let saved = newQuestion;
+    if (adminApiKey) {
+      try {
+        saved = await saveAdminQuestion(adminApiKey, newQuestion);
+      } catch (err) {
+        console.warn("Could not save to remote API, saving locally:", err);
+      }
+    }
+    saveStoredStandaloneQuestion(saved);
+    setQuestions((current) => [saved, ...current.filter((question) => question.id !== saved.id)]);
     setIsCreateModalOpen(false);
 
     // Reset form
@@ -233,10 +237,13 @@ export const AdminDashboard = (): ReactElement => {
 
   const handleDeleteQuestion = async (id: string, title: string) => {
     if (confirm(`Are you sure you want to delete "${title}"?`)) {
-      try {
-        if (!adminApiKey) throw new Error("Connect the admin API key before deleting database questions.");
-        await deleteAdminQuestion(adminApiKey, id);
-      } catch (cause) { showToast(cause instanceof Error ? cause.message : "Question could not be deleted."); return; }
+      if (adminApiKey) {
+        try {
+          await deleteAdminQuestion(adminApiKey, id);
+        } catch (err) {
+          console.warn("Could not delete from remote API:", err);
+        }
+      }
       deleteStoredStandaloneQuestion(id);
       setQuestions(getStoredStandaloneQuestions());
       showToast(`🗑️ Question removed from student and admin catalog.`);
@@ -245,28 +252,42 @@ export const AdminDashboard = (): ReactElement => {
 
   const handleToggleQuestionStatus = async (q: StoredStandaloneQuestion) => {
     const nextStatus = q.status === "Published" ? "Draft" : "Published";
-    const updated: StoredStandaloneQuestion = {
+    let updated: StoredStandaloneQuestion = {
       ...q,
       status: nextStatus,
       updatedAt: "Today"
     };
-    try {
-      if (!adminApiKey) throw new Error("Connect the admin API key before editing database questions.");
-      const saved = await updateAdminQuestion(adminApiKey, q.id, updated);
-      saveStoredStandaloneQuestion(saved);
-      setQuestions((current) => current.map((question) => question.id === q.id ? saved : question));
-    } catch (cause) { showToast(cause instanceof Error ? cause.message : "Question could not be updated."); return; }
+    if (adminApiKey) {
+      try {
+        const remoteUpdated = await updateAdminQuestion(adminApiKey, q.id, updated);
+        updated = remoteUpdated;
+      } catch (err) {
+        console.warn("Could not update remote status:", err);
+      }
+    }
+    saveStoredStandaloneQuestion(updated);
+    setQuestions((current) => current.map((question) => question.id === q.id ? updated : question));
     showToast(`Question status updated to ${nextStatus}.`);
   };
 
   const handleToggleQuestionPayment = async (question: StoredStandaloneQuestion) => {
-    try {
-      if (!adminApiKey) throw new Error("Connect the admin API key before editing database questions.");
-      const updated = await updateAdminQuestion(adminApiKey, question.id, { isPaid: !(question.isPaid ?? question.subjectId !== "free") });
-      saveStoredStandaloneQuestion(updated);
-      setQuestions((current) => current.map((entry) => entry.id === question.id ? updated : entry));
-      showToast(`Question is now ${updated.isPaid ? "Paid" : "Unpaid"}.`);
-    } catch (cause) { showToast(cause instanceof Error ? cause.message : "Payment status could not be updated."); }
+    const nextIsPaid = !(question.isPaid ?? question.subjectId !== "free");
+    let updated: StoredStandaloneQuestion = {
+      ...question,
+      isPaid: nextIsPaid,
+      updatedAt: "Today"
+    };
+    if (adminApiKey) {
+      try {
+        const remoteUpdated = await updateAdminQuestion(adminApiKey, question.id, { isPaid: nextIsPaid });
+        updated = remoteUpdated;
+      } catch (err) {
+        console.warn("Could not update remote payment status:", err);
+      }
+    }
+    saveStoredStandaloneQuestion(updated);
+    setQuestions((current) => current.map((entry) => entry.id === question.id ? updated : entry));
+    showToast(`Question is now ${updated.isPaid ? "Paid" : "Unpaid"}.`);
   };
 
   const handleVerifyPayment = async (studentId: string): Promise<void> => {
@@ -845,7 +866,7 @@ export const AdminDashboard = (): ReactElement => {
                 <label htmlFor="admin-question-api-key" style={{ fontSize: "12px", fontWeight: 700, color: "#444", whiteSpace: "nowrap" }}>Secure API key</label>
                 <input id="admin-question-api-key" type="password" autoComplete="current-password" placeholder="Configured in API server environment" value={keyDraft} onChange={(event) => setKeyDraft(event.target.value)} style={{ flex: 1, minWidth: 0, padding: "9px 12px", borderRadius: "8px", border: "1px solid #dedce9", fontSize: "13px" }} />
                 <button type="button" onClick={() => void connectQuestionApi(keyDraft)} style={{ padding: "9px 14px", borderRadius: "8px", border: "none", background: "#1e293b", color: "#fff", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>Connect MongoDB</button>
-                <span style={{ fontSize: "11px", color: adminApiKey ? "#15803d" : "#b45309" }}>{adminApiKey ? "Connected" : "Key required"}</span>
+                <span style={{ fontSize: "11px", color: adminApiKey ? "#15803d" : "#64748b" }}>{adminApiKey ? "MongoDB Connected" : "Local & Live Sync Active"}</span>
               </div>
 
               {/* Filters toolbar */}

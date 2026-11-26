@@ -11,3 +11,6 @@ coverage/
 .test-tmp-*/
 .DS_Store
 *.ps1
+
+.vercel
+.env*

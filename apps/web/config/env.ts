@@ -7,11 +7,9 @@ export const readWebEnvironment = (
   source?: WebEnvironmentSource
 ): ValidatedWebEnvironment => {
   const runtimeEnvironment = source ?? process.env;
-  const localDevelopmentApiUrl = source === undefined && process.env.NODE_ENV === "development"
-    ? "http://127.0.0.1:4000"
-    : undefined;
+  const defaultApiUrl = "http://127.0.0.1:4000";
 
   return validateWebEnvironment({
-    NEXT_PUBLIC_API_BASE_URL: runtimeEnvironment.NEXT_PUBLIC_API_BASE_URL ?? localDevelopmentApiUrl
+    NEXT_PUBLIC_API_BASE_URL: runtimeEnvironment.NEXT_PUBLIC_API_BASE_URL ?? defaultApiUrl
   });
 };

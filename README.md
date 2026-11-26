@@ -1,6 +1,7 @@
 # NCLEXLab - Next-Generation NCLEX-RN Preparation Platform
 
 ![NCLEXLab Banner](https://img.shields.io/badge/NCLEX--RN-Preparation%20Platform-4f46e5?style=for-the-badge&logo=mediamark)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-nclexlab.vercel.app-success?style=for-the-badge&logo=vercel)](https://nclexlab.vercel.app/)
 [![Next.js](https://img.shields.io/badge/Next.js-16.3-black?style=flat-square&logo=next.js)](https://nextjs.org/)
 [![React](https://img.shields.io/badge/React-19.0-61dafb?style=flat-square&logo=react)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178c6?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)

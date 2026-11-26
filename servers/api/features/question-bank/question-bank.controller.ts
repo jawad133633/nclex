@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { ZodError } from "zod";
 import type { QuestionBankService } from "./question-bank.service.js";
-import { answerInputSchema } from "./question-bank.validation.js";
+import { answerInputSchema, testStateInputSchema } from "./question-bank.validation.js";
 
 type ApiResponse = Pick<Response, "json" | "status">;
 const getBearerToken = (request: Request): string | undefined => {
@@ -14,8 +14,11 @@ const reportError = (response: ApiResponse, cause: unknown): void => {
   const message = cause instanceof Error ? cause.message : "Question service unavailable.";
   const status = message.includes("session is required") || message.includes("session is invalid") ? 401
     : message.includes("not assigned") ? 403
+      : message.includes("not found") ? 404
       : message.includes("verified active payment") ? 402
-        : message.includes("already been answered") ? 409 : 503;
+        : message.includes("already been answered") ? 409
+          : message.includes("Only ") ? 422
+            : message.includes("Selected answer is invalid") ? 400 : 503;
   response.status(status).json({ message });
 };
 
@@ -74,5 +77,33 @@ export const createQuestionBankController = (service: QuestionBankService) => ({
       const id = Array.isArray(request.params.id) ? request.params.id[0] ?? "" : request.params.id ?? "";
       response.json(await service.answerQuestion(getBearerToken(request), id, parsed.data.selectedIndex));
     } catch (cause) { reportError(response, cause); }
+  },
+  testOptions: async (request: Request, response: ApiResponse): Promise<void> => {
+    try { response.json(await service.getTestOptions(getBearerToken(request))); } catch (cause) { reportError(response, cause); }
+  },
+  createTest: async (request: Request, response: ApiResponse): Promise<void> => {
+    try { response.status(201).json(await service.createTest(getBearerToken(request), request.body)); } catch (cause) { reportError(response, cause); }
+  },
+  getTest: async (request: Request, response: ApiResponse): Promise<void> => {
+    const id = Array.isArray(request.params.id) ? request.params.id[0] ?? "" : request.params.id ?? "";
+    try { response.json(await service.getTest(getBearerToken(request), id)); } catch (cause) { reportError(response, cause); }
+  },
+  submitTestAnswer: async (request: Request, response: ApiResponse): Promise<void> => {
+    const testId = Array.isArray(request.params.id) ? request.params.id[0] ?? "" : request.params.id ?? "";
+    const questionId = Array.isArray(request.params.questionId) ? request.params.questionId[0] ?? "" : request.params.questionId ?? "";
+    try { response.json(await service.submitTestAnswer(getBearerToken(request), testId, questionId, request.body)); } catch (cause) { reportError(response, cause); }
+  },
+  updateQuestionStatus: async (request: Request, response: ApiResponse): Promise<void> => {
+    const id = Array.isArray(request.params.id) ? request.params.id[0] ?? "" : request.params.id ?? "";
+    try { response.json(await service.updateQuestionStatus(getBearerToken(request), id, request.body)); } catch (cause) { reportError(response, cause); }
+  },
+  setTestState: async (request: Request, response: ApiResponse): Promise<void> => {
+    const id = Array.isArray(request.params.id) ? request.params.id[0] ?? "" : request.params.id ?? "";
+    const parsed = testStateInputSchema.safeParse(request.body);
+    if (!parsed.success) { response.status(400).json({ message: "Invalid test state.", issues: parsed.error.issues }); return; }
+    const draft = parsed.data.currentQuestionId && parsed.data.draftSelectedIndices
+      ? { questionId: parsed.data.currentQuestionId, selectedIndices: parsed.data.draftSelectedIndices }
+      : undefined;
+    try { response.json(await service.setTestState(getBearerToken(request), id, parsed.data.status, parsed.data.elapsedSeconds, draft)); } catch (cause) { reportError(response, cause); }
   }
 });

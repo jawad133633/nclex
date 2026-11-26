@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, type ReactElement } from "react";
 import Link from "next/link";
 import {
   Activity, AlertCircle, ArrowLeft, ArrowRight, ArrowUp, Baby, BarChart3, BicepsFlexed, Bookmark, BookOpen, BookOpenCheck, Brain,
-  Calculator, Calendar, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, CircleHelp, Clock,
+  Calculator, Calendar, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleHelp, Clock,
   FileCheck2, FileClock, FilePlus2, FileQuestion, FileText, Flame,
   FolderHeart, GraduationCap, Heart, HeartPulse, HelpCircle, History,
   ExternalLink,
@@ -16,14 +16,58 @@ import {
 import {
   type StoredStandaloneQuestion,
   getStoredStandaloneQuestions,
-  getOrGenerateTestQuestions,
-  subscribeToStandaloneQuestions
+  subscribeToStandaloneQuestions,
+  STANDALONE_SUBJECTS,
+  DEFAULT_STANDALONE_QUESTIONS
 } from "@/features/shared/standalone-store";
 import {
   DEFAULT_MEMBERSHIP,
   type StudentMembership
 } from "@/features/shared/membership-store";
-import { answerAssignedQuestion, getStudentSession, loadAssignedQuestions } from "@/features/shared/question-bank-api";
+import {
+  answerAssignedQuestion,
+  answerStudentTestQuestion,
+  createLocalStudentTest,
+  createStudentTest,
+  getLocalTestOptions,
+  getStudentSession,
+  loadAssignedQuestions,
+  loadStudentTest,
+  loadStudentTestOptions,
+  updateStudentQuestionStatus,
+  updateStudentTestState,
+  type StudentTestOptions,
+  type StudentTestQuestion
+} from "@/features/shared/question-bank-api";
+import { StudentAccountView } from "./student-account-view";
+import { deleteStudentScheduleAssignment, loadStudentStudySchedule, rebalanceStudentStudySchedule, replaceStudentStudySchedule, saveStudentScheduleSettings, updateStudentScheduleAssignment } from "@/features/shared/study-schedule-api";
+import {
+  type CatExamSession,
+  type CatExamSummary,
+  createCatExamSession,
+  selectNextCatQuestion,
+  recordCatAttempt,
+  generateCatExamSummary,
+  saveCatExamSummary,
+  getSavedCatExamSummaries
+} from "@/features/student/cat-engine";
+import {
+  addDaysToDateKey,
+  createDefaultStudySchedule,
+  createStudySchedule,
+  getScheduleDateRange,
+  getScheduleEndDate,
+  getScheduleSummary,
+  getScheduleWeekNumber,
+  getWeekStartDate,
+  rebalanceStudySchedule,
+  toDateKey,
+  type ScheduleDayOff,
+  type StudySchedule,
+  type StudyScheduleTask,
+  type StudyScheduleView
+} from "@/features/student/study-schedule";
+import { getCurrentAuthUser, logoutUser, type AuthUser } from "@/features/auth";
 
 interface ExpertInfo {
   name: string;
@@ -1376,8 +1420,12 @@ const catFaqs = [
   }
 ];
 
-const StudentDashboard = (): ReactElement => {
-  const [activeTab, setActiveTab] = useState<string>("home");
+interface StudentDashboardProps {
+  initialTab?: string;
+}
+
+const StudentDashboard = ({ initialTab = "home" }: StudentDashboardProps = {}): ReactElement => {
+  const [activeTab, setActiveTab] = useState<string>(initialTab);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
   const [isCreateTestOpen, setIsCreateTestOpen] = useState<boolean>(false);
@@ -1386,6 +1434,8 @@ const StudentDashboard = (): ReactElement => {
   const [targetExamDate, setTargetExamDate] = useState<string>("2026-06-15");
   const [hoursPerWeek, setHoursPerWeek] = useState<number>(15);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState<boolean>(false);
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Create Test Modal state matching exact reference screenshot
@@ -1398,13 +1448,14 @@ const StudentDashboard = (): ReactElement => {
     mastered: false,
     bookmarked: false
   });
-  const [isAllSubjectsSelected, setIsAllSubjectsSelected] = useState<boolean>(false);
   const [isSubjectsExpanded, setIsSubjectsExpanded] = useState<boolean>(true);
-  const [isFreeQuestionsChecked, setIsFreeQuestionsChecked] = useState<boolean>(true);
-  const [isFreeQuestionsSubChecked, setIsFreeQuestionsSubChecked] = useState<boolean>(true);
   const [isFreeQuestionsDropdownOpen, setIsFreeQuestionsDropdownOpen] = useState<boolean>(true);
   const [testQuestionCount, setTestQuestionCount] = useState<number>(6);
   const [testCreationNotice, setTestCreationNotice] = useState<string | null>(null);
+  const [testOptions, setTestOptions] = useState<StudentTestOptions>(() => getLocalTestOptions());
+  const [isLoadingTestOptions, setIsLoadingTestOptions] = useState<boolean>(false);
+  const [isCreatingTest, setIsCreatingTest] = useState<boolean>(false);
+  const [selectedTestSubjectIds, setSelectedTestSubjectIds] = useState<string[]>(["free"]);
 
   const [openPerfFaqIndex, setOpenPerfFaqIndex] = useState<number | null>(null);
   const [openCatFaqIndex, setOpenCatFaqIndex] = useState<number | null>(null);
@@ -1412,18 +1463,111 @@ const StudentDashboard = (): ReactElement => {
   // Standalone Questions synced with Admin Dashboard in real-time
   const [standaloneQuestions, setStandaloneQuestions] = useState<StoredStandaloneQuestion[]>([]);
   const [studentSessionToken, setStudentSessionToken] = useState("");
+  const [activeStudentTestId, setActiveStudentTestId] = useState<string | null>(null);
   const [questionApiError, setQuestionApiError] = useState<string | null>(null);
   const [questionProgress, setQuestionProgress] = useState<Readonly<{ answered: number; total: number }> | null>(null);
   const [practicingQuestion, setPracticingQuestion] = useState<StoredStandaloneQuestion | null>(null);
   const [practicingSelectedOption, setPracticingSelectedOption] = useState<number | null>(null);
   const [practicingIsSubmitted, setPracticingIsSubmitted] = useState<boolean>(false);
 
+  interface SavedTestAttempt {
+    id: string;
+    name: string;
+    type: "custom" | "cat" | "case-study";
+    pool: string;
+    date: string;
+    scorePercent: number;
+    avgScorePercent: number;
+    totalQuestions: number;
+    answeredCount: number;
+    passStatus?: "PASS" | "FAIL";
+    passProbability?: number;
+  }
+
   // Standalone Exam Engine State
-  const [activeTestExamType, setActiveTestExamType] = useState<"case-study" | "standalone">("case-study");
+  const [activeTestExamType, setActiveTestExamType] = useState<"case-study" | "standalone" | "cat">("case-study");
   const [activeStandaloneQuestionsList, setActiveStandaloneQuestionsList] = useState<StoredStandaloneQuestion[]>([]);
   const [standaloneAnswers, setStandaloneAnswers] = useState<
-    Record<number, { selectedOption: number | null; isSubmitted: boolean }>
+    Record<number, { selectedOption: number | null; selectedIndices?: number[]; isSubmitted: boolean; correct?: boolean }>
   >({});
+  const [catSession, setCatSession] = useState<CatExamSession | null>(null);
+  const [catExamSummary, setCatExamSummary] = useState<CatExamSummary | null>(null);
+  const [savedCatSummaries, setSavedCatSummaries] = useState<CatExamSummary[]>(() => {
+    return typeof window !== "undefined" ? getSavedCatExamSummaries() : [];
+  });
+  const [savedPreviousTests, setSavedPreviousTests] = useState<SavedTestAttempt[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = localStorage.getItem("nclex_test_history_v1");
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const saveCustomTestAttempt = (attempt: SavedTestAttempt) => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = localStorage.getItem("nclex_test_history_v1");
+      const existing: SavedTestAttempt[] = raw ? JSON.parse(raw) : [];
+      const updated = [attempt, ...existing.filter((a) => a.id !== attempt.id)];
+      localStorage.setItem("nclex_test_history_v1", JSON.stringify(updated));
+      setSavedPreviousTests(updated);
+    } catch (err) {
+      console.warn("Could not save test attempt:", err);
+    }
+  };
+
+  const startCatExam = (examNum: 1 | 2 | 3 | 4) => {
+    const session = createCatExamSession(examNum);
+    const pool = standaloneQuestions.length > 0 ? standaloneQuestions : DEFAULT_STANDALONE_QUESTIONS;
+    const firstItem = selectNextCatQuestion(pool, new Set(), 0.0, 0);
+    setCatSession(session);
+    setCatExamSummary(null);
+    setActiveTestExamType("cat");
+    setActiveStandaloneQuestionsList([firstItem.question]);
+    setTestQuestionIndex(0);
+    setTestTimerSeconds(0);
+    setIsTimerPaused(false);
+    setStandaloneAnswers({});
+    setIsResultsScreenActive(false);
+    setIsTestActive(true);
+  };
+
+  const toggleQuestionTag = async (tag: "learning" | "reviewing" | "mastered") => {
+    const currentQ = activeStandaloneQuestionsList[testQuestionIndex] ?? standaloneQuestions[testQuestionIndex];
+    if (!currentQ) return;
+    const existing = questionTags[testQuestionIndex];
+    const newTag = existing === tag ? null : tag;
+    setQuestionTags((prev) => ({ ...prev, [testQuestionIndex]: newTag }));
+    if (studentSessionToken && currentQ.id) {
+      try {
+        await updateStudentQuestionStatus(studentSessionToken, currentQ.id, {
+          status: newTag ?? "unused",
+          bookmarked: Boolean(markedQuestions[testQuestionIndex])
+        });
+      } catch (err) {
+        console.warn("Could not sync question status:", err);
+      }
+    }
+  };
+
+  const toggleBookmark = async () => {
+    const currentQ = activeStandaloneQuestionsList[testQuestionIndex] ?? standaloneQuestions[testQuestionIndex];
+    if (!currentQ) return;
+    const isMarked = !markedQuestions[testQuestionIndex];
+    setMarkedQuestions((prev) => ({ ...prev, [testQuestionIndex]: isMarked }));
+    if (studentSessionToken && currentQ.id) {
+      try {
+        await updateStudentQuestionStatus(studentSessionToken, currentQ.id, {
+          status: questionTags[testQuestionIndex] ?? "unused",
+          bookmarked: isMarked
+        });
+      } catch (err) {
+        console.warn("Could not sync bookmark:", err);
+      }
+    }
+  };
 
   // Student Membership State (Free vs Paid)
   const [membership, setMembership] = useState<StudentMembership>(DEFAULT_MEMBERSHIP);
@@ -1442,40 +1586,81 @@ const StudentDashboard = (): ReactElement => {
   const [paywallSuccessNotice, setPaywallSuccessNotice] = useState<string | null>(null);
   const [isTestActive, setIsTestActive] = useState<boolean>(false);
 
-  const availableTestQuestions = standaloneQuestions.filter((question) =>
-    question.status === "Published" &&
-    !question.locked &&
-    (membership.isPaid || !(question.isPaid ?? question.subjectId !== "free")) &&
-    !question.answered
-  );
-
-  const createConfiguredTest = (): void => {
-    const candidatePool = standaloneQuestions.length > 0 
-      ? standaloneQuestions 
-      : getStoredStandaloneQuestions();
-
-    let poolQuestions = candidatePool.filter((q) => q.status === "Published" && !q.locked);
-    if (!membership.isPaid) {
-      const freeQuestions = poolQuestions.filter((q) => !(q.isPaid ?? q.subjectId !== "free"));
-      if (freeQuestions.length > 0) {
-        poolQuestions = freeQuestions;
-      }
-    }
-
-    // Always generate the exact requested number of questions (e.g. 50, 100, 150)
-    const selectedQuestions = getOrGenerateTestQuestions(
-      testQuestionCount,
-      poolQuestions.length > 0 ? poolQuestions : candidatePool
-    );
-
-    setTestCreationNotice(null);
-    setQuestionApiError(null);
-    setStandaloneAnswers({});
-    setIsCreateTestOpen(false);
-    startStandaloneExam(selectedQuestions, 0);
+  const getTestSubjectCount = (subjectId: string): number => {
+    const fromApi = testOptions?.subjects.find((subject) => subject.id === subjectId)?.count;
+    if (fromApi !== undefined && fromApi > 0) return fromApi;
+    const localCount = standaloneQuestions.filter((q) => q.subjectId === subjectId).length;
+    if (localCount > 0) return localCount;
+    const base = STANDALONE_SUBJECTS.find((s) => s.id === subjectId)?.baseTotal;
+    return base ?? 25;
+  };
+  const toggleTestSubject = (subjectId: string): void => {
+    setSelectedTestSubjectIds((current) => current.includes(subjectId) ? current.filter((id) => id !== subjectId) : [...current, subjectId]);
+  };
+  const selectAllTestSubjects = (): void => {
+    const allIds = STANDALONE_SUBJECTS.map((s) => s.id);
+    const allSelected = allIds.every((id) => selectedTestSubjectIds.includes(id));
+    setSelectedTestSubjectIds(allSelected ? [] : allIds);
   };
 
-  const startStandaloneExam = (questions?: StoredStandaloneQuestion[], startIndex: number = 0) => {
+  const createConfiguredTest = async (): Promise<void> => {
+    const pools = Object.entries(questionPools).filter(([, selected]) => selected).map(([pool]) => pool);
+    const activePools = pools.length > 0 ? pools : ["unused", "learning", "reviewing"];
+    const activeSubjectIds = selectedTestSubjectIds.length > 0 ? selectedTestSubjectIds : STANDALONE_SUBJECTS.map((s) => s.id);
+    const countToCreate = Math.max(1, Math.min(150, testQuestionCount || 50));
+
+    setIsCreatingTest(true);
+    setTestCreationNotice(null);
+    try {
+      const session = studentSessionToken ? { token: studentSessionToken } : await getStudentSession();
+      setStudentSessionToken(session.token);
+      const test = await createStudentTest(session.token, {
+        pools: activePools,
+        subjectIds: activeSubjectIds,
+        questionCount: countToCreate,
+        tutorMode: isTutorMode,
+        timedMode: isTimedMode
+      });
+      const selectedQuestions: StoredStandaloneQuestion[] = test.questions.map((question) => ({
+        id: question.id, subjectId: question.subjectId, subjectName: question.subjectName, title: question.title, stem: question.stem,
+        type: question.type, options: [...question.options], correctIndex: question.correctIndex ?? -1,
+        ...(question.correctIndices ? { correctIndices: [...question.correctIndices] } : {}), rationale: question.rationale ?? "",
+        status: "Published", createdAt: test.createdAt, updatedAt: test.createdAt, author: "NCLEXLab Content Team", isPaid: false, locked: false
+      }));
+      setActiveStudentTestId(test.id);
+      localStorage.setItem("nclex_active_student_test_v1", test.id);
+      setTestCreationNotice(null);
+      setQuestionApiError(null);
+      setStandaloneAnswers({});
+      setIsCreateTestOpen(false);
+      startStandaloneExam(selectedQuestions, 0, test.id);
+    } catch (cause) {
+      console.warn("Server test creation failed, launching local test:", cause);
+      const localTest = createLocalStudentTest({
+        pools: activePools,
+        subjectIds: activeSubjectIds,
+        questionCount: countToCreate,
+        tutorMode: isTutorMode,
+        timedMode: isTimedMode
+      });
+      const localSelectedQuestions: StoredStandaloneQuestion[] = localTest.questions.map((question: StudentTestQuestion) => ({
+        id: question.id, subjectId: question.subjectId, subjectName: question.subjectName, title: question.title, stem: question.stem,
+        type: question.type, options: [...question.options], correctIndex: question.correctIndex ?? -1,
+        ...(question.correctIndices ? { correctIndices: [...question.correctIndices] } : {}), rationale: question.rationale ?? "",
+        status: "Published", createdAt: localTest.createdAt, updatedAt: localTest.createdAt, author: "NCLEXLab Content Team", isPaid: false, locked: false, answered: question.answered,
+        poolStatus: question.status, bookmarked: question.bookmarked
+      }));
+      setActiveStudentTestId(localTest.id);
+      localStorage.setItem("nclex_active_student_test_v1", localTest.id);
+      setTestCreationNotice(null);
+      setQuestionApiError(null);
+      setStandaloneAnswers({});
+      setIsCreateTestOpen(false);
+      startStandaloneExam(localSelectedQuestions, 0, localTest.id);
+    } finally { setIsCreatingTest(false); }
+  };
+
+  const startStandaloneExam = (questions?: StoredStandaloneQuestion[], startIndex: number = 0, testId?: string) => {
     const list = questions && questions.length > 0
       ? questions
       : (standaloneQuestions.length > 0 ? standaloneQuestions : getStoredStandaloneQuestions());
@@ -1496,6 +1681,7 @@ const StudentDashboard = (): ReactElement => {
     setTestTimerSeconds(0);
     setIsTimerPaused(false);
     setIsResultsScreenActive(false);
+    if (testId) setActiveStudentTestId(testId);
     setIsTestActive(true);
     setQuestionApiError(null);
   };
@@ -1563,6 +1749,45 @@ const StudentDashboard = (): ReactElement => {
     };
   }, [isTestActive]);
 
+  useEffect(() => {
+    setCurrentUser(getCurrentAuthUser());
+    const handleAuthChange = (e: Event) => {
+      const custom = e as CustomEvent<AuthUser | null>;
+      setCurrentUser(custom.detail);
+    };
+    window.addEventListener("nclex_auth_state_changed", handleAuthChange);
+    return () => window.removeEventListener("nclex_auth_state_changed", handleAuthChange);
+  }, []);
+
+  useEffect(() => {
+    if (!isCreateTestOpen) return;
+    let active = true;
+    setIsLoadingTestOptions(true);
+    setTestCreationNotice(null);
+    void (async () => {
+      try {
+        const session = studentSessionToken ? { token: studentSessionToken } : await getStudentSession();
+        const options = await loadStudentTestOptions(session.token);
+        if (!active) return;
+        setStudentSessionToken(session.token);
+        setTestOptions(options);
+        const allSubjectIds = STANDALONE_SUBJECTS.map((s) => s.id);
+        setSelectedTestSubjectIds((current) => current.length > 0 ? current : allSubjectIds);
+        setTestQuestionCount((current) => (current && current > 1 ? current : 50));
+        setTestCreationNotice(null);
+      } catch {
+        if (active) {
+          const fallbackOptions = getLocalTestOptions();
+          setTestOptions(fallbackOptions);
+          setSelectedTestSubjectIds(STANDALONE_SUBJECTS.map((s) => s.id));
+          setTestQuestionCount(50);
+          setTestCreationNotice(null);
+        }
+      } finally { if (active) setIsLoadingTestOptions(false); }
+    })();
+    return () => { active = false; };
+  }, [isCreateTestOpen, studentSessionToken]);
+
   const submitStandaloneAnswer = async (): Promise<void> => {
     const selectedOption = standaloneAnswers[testQuestionIndex]?.selectedOption;
     const currentQuestion = activeStandaloneQuestionsList[testQuestionIndex] ?? standaloneQuestions[testQuestionIndex];
@@ -1587,10 +1812,47 @@ const StudentDashboard = (): ReactElement => {
       correct = selectedOption === correctIndex;
     }
 
-    setStandaloneAnswers((current) => ({ ...current, [testQuestionIndex]: { selectedOption, isSubmitted: true } }));
+    setStandaloneAnswers((current) => ({ ...current, [testQuestionIndex]: { selectedOption, isSubmitted: true, correct } }));
     setStandaloneQuestions((current) => current.map((question) => question.id === currentQuestionId ? { ...question, answered: true, correctIndex, rationale } : question));
     setActiveStandaloneQuestionsList((current) => current.map((question) => question.id === currentQuestionId ? { ...question, answered: true, correctIndex, rationale } : question));
     setQuestionApiError(null);
+
+    if (activeTestExamType === "cat" && catSession && currentQuestion) {
+      const isCorrect = selectedOption === correctIndex;
+      const { updatedSession, stoppingDecision } = recordCatAttempt(
+        catSession,
+        currentQuestion,
+        selectedOption,
+        isCorrect,
+        testTimerSeconds
+      );
+      setCatSession(updatedSession);
+      if (stoppingDecision.shouldStop) {
+        const summary = generateCatExamSummary(updatedSession);
+        saveCatExamSummary(summary);
+        setCatExamSummary(summary);
+        setSavedCatSummaries(getSavedCatExamSummaries());
+        saveCustomTestAttempt({
+          id: updatedSession.examId,
+          name: `CAT Readiness Exam ${updatedSession.examNumber}`,
+          type: "cat",
+          pool: "Adaptive (85-150)",
+          date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+          scorePercent: summary.accuracyPercent,
+          avgScorePercent: 68,
+          totalQuestions: summary.totalQuestions,
+          answeredCount: summary.totalQuestions,
+          ...(summary.passStatus ? { passStatus: summary.passStatus } : {}),
+          passProbability: summary.passProbability
+        });
+        setIsResultsScreenActive(true);
+      } else {
+        const pool = standaloneQuestions.length > 0 ? standaloneQuestions : DEFAULT_STANDALONE_QUESTIONS;
+        const usedIds = new Set(updatedSession.history.map((h) => h.questionId));
+        const nextQ = selectNextCatQuestion(pool, usedIds, updatedSession.currentTheta, updatedSession.totalAnswered);
+        setActiveStandaloneQuestionsList((current) => [...current, nextQ.question]);
+      }
+    }
   };
   const [expandedPerfSubjects, setExpandedPerfSubjects] = useState<Record<string, boolean>>({
     "adult-health": true,
@@ -1613,10 +1875,17 @@ const StudentDashboard = (): ReactElement => {
   const [strategyFilterQuery, setStrategyFilterQuery] = useState<string>("");
   const [isSidebarSubjectsOpen, setIsSidebarSubjectsOpen] = useState<boolean>(true);
 
-  // Study Schedule Calendar state matching media_1795079503481_ba76319d.jpg
-  const [hasActiveSchedule, setHasActiveSchedule] = useState<boolean>(true);
-  const [scheduleCheckedTasks, setScheduleCheckedTasks] = useState<Record<string, boolean>>({});
-  const [scheduleWeekIndex, setScheduleWeekIndex] = useState<number>(1);
+  const [studySchedule, setStudySchedule] = useState<StudySchedule | null>(null);
+  const [isStudyScheduleLoaded, setIsStudyScheduleLoaded] = useState<boolean>(false);
+  const [scheduleLoadError, setScheduleLoadError] = useState<string | null>(null);
+  const [scheduleView, setScheduleView] = useState<StudyScheduleView>("month");
+  const [scheduleFilter, setScheduleFilter] = useState<"all" | "questions" | "resources">("all");
+  const [selectedScheduleTask, setSelectedScheduleTask] = useState<StudyScheduleTask | null>(null);
+  const [scheduleCursorDate, setScheduleCursorDate] = useState<string>(() => toDateKey());
+  const [scheduleUndoSnapshot, setScheduleUndoSnapshot] = useState<StudySchedule | null>(null);
+  const [scheduleToastMessage, setScheduleToastMessage] = useState<string | null>(null);
+  const [scheduleDialogMode, setScheduleDialogMode] = useState<"create" | "rebalance" | "settings">("create");
+  const [scheduleFormError, setScheduleFormError] = useState<string | null>(null);
 
   // Active Next Gen NCLEX Test Engine State (matching media_1795076768226_00845f68.png)
   const [testQuestionIndex, setTestQuestionIndex] = useState<number>(0);
@@ -1741,7 +2010,32 @@ const StudentDashboard = (): ReactElement => {
       return "Postoperatively following bowel resection or perforation repair, the nurse must monitor closely for signs of peritonitis or wound dehiscence between postoperative days 3 to 5. Key findings requiring urgent physician notification include abdominal girth expansion, wound erythema/warmth, fever, and abdominal guarding or rigidity.";
     }
 
-    return "In pediatric intussusception, the NCLEX tests your clinical judgment regarding the triad of symptoms (episodic colicky pain, sausage-shaped RUQ mass, currant jelly stools), diagnostic confirmation via ultrasound, first-line air enema reduction, and vigilant assessment for signs of bowel perforation (rigidity, warmth/fever, distension). Let me know if you would like me to explain any specific finding or rationale!";
+    if (q.includes("digoxin") || q.includes("potassium") || q.includes("hypokalemia") || q.includes("halo")) {
+      return "Digoxin binds to myocardial Na+/K+-ATPase. Hypokalemia (<3.5 mEq/L) sensitizes the heart to digoxin, precipitating lethal toxicity even at standard dosages. Early toxic symptoms include anorexia, nausea, and yellow-green visual halos. The nurse must assess the apical heart rate for 1 full minute prior to administration and hold for HR < 60 bpm.";
+    }
+
+    if (q.includes("pe") || q.includes("pulmonary embolism") || q.includes("dvt") || q.includes("heparin")) {
+      return "In suspected acute pulmonary embolism, sudden pleuritic pain, dyspnea, and hypoxia require immediate Airway-Breathing-Circulation action: elevate head of bed to optimize gas exchange and apply high-flow oxygen immediately. For heparin, monitor aPTT (therapeutic range: 1.5 - 2.5x control) and watch for Heparin-Induced Thrombocytopenia (platelet drop > 50%).";
+    }
+
+    if (q.includes("dka") || q.includes("ketoacidosis") || q.includes("glucose") || q.includes("acidosis")) {
+      return "In Diabetic Ketoacidosis (DKA), profound osmotic diuresis leads to severe hypovolemia. Priority 1 is fluid resuscitation with isotonic normal saline (0.9% NaCl). Regular insulin IV is administered once fluid therapy has begun. Potassium must be closely tracked, as insulin drives K+ into cells, risking acute hypokalemia and fatal cardiac dysrhythmias.";
+    }
+
+    if (q.includes("lithium") || q.includes("bipolar") || q.includes("mania")) {
+      return "Lithium carbonate has a very narrow therapeutic index (0.6 - 1.2 mEq/L). Coarse hand tremors, severe diarrhea, vomiting, and ataxia indicate acute toxicity. Adequate fluid intake (2-3 L/day) and consistent sodium consumption are critical because hyponatremia prompts the kidneys to reabsorb lithium, precipitating severe toxicity.";
+    }
+
+    if (q.includes("delegat") || q.includes("uap") || q.includes("lpn") || q.includes("priority")) {
+      return "NCLEX Delegation Golden Rule (EAT): The registered nurse NEVER delegates Evaluation, Assessment, or Teaching to unlicensed personnel or practical nurses. Stable clients with standard, predictable tasks (hygiene, vital signs on stable clients, measurement of catheter drainage) can be safely delegated to UAPs.";
+    }
+
+    const currentQ = activeStandaloneQuestionsList[testQuestionIndex] ?? standaloneQuestions[testQuestionIndex];
+    if (currentQ) {
+      return `For "${currentQ.title}", NCLEX Clinical Judgment focuses on identifying key cues in the stem: ${currentQ.stem.slice(0, 140)}... The correct clinical approach is Option ${String.fromCharCode(65 + currentQ.correctIndex)}, because: ${currentQ.rationale}`;
+    }
+
+    return "In Next Gen NCLEX, questions measure your ability to Recognize Cues, Analyze Cues, Prioritize Hypotheses, Generate Solutions, Take Action, and Evaluate Outcomes. Ask me about any symptom, priority action, pathophysiological rationale, or pharmacology Pearl!";
   };
 
   const handleSendAiMessage = (queryToSend?: string) => {
@@ -2209,12 +2503,165 @@ const StudentDashboard = (): ReactElement => {
     }
   };
 
-  // Study Schedule Modal state matching exact reference screenshot
-  const [scheduleStartDate, setScheduleStartDate] = useState<string>("2026-11-16");
-  const [scheduleExamDate, setScheduleExamDate] = useState<string>("");
+  // Study Schedule settings and rebalance form
+  const [scheduleStartDate, setScheduleStartDate] = useState<string>(() => toDateKey());
+  const [scheduleExamDate, setScheduleExamDate] = useState<string>(() => addDaysToDateKey(toDateKey(), 29));
   const [noExamDateYet, setNoExamDateYet] = useState<boolean>(false);
-  const [selectedDaysOff, setSelectedDaysOff] = useState<string>("Sunday");
+  const [selectedDaysOff, setSelectedDaysOff] = useState<ScheduleDayOff>("Sunday");
+  const [dailyStudyHours, setDailyStudyHours] = useState<number>(2);
   const [isDaysOffDropdownOpen, setIsDaysOffDropdownOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadStudentStudySchedule().then((initialSchedule) => {
+      if (cancelled) return;
+      setStudySchedule(initialSchedule);
+      setScheduleStartDate(initialSchedule.startDate);
+      setScheduleExamDate(initialSchedule.examDate ?? "");
+      setNoExamDateYet(initialSchedule.examDate === null);
+      setSelectedDaysOff(initialSchedule.daysOff);
+      setDailyStudyHours(initialSchedule.dailyStudyHours ?? 2);
+      setScheduleCursorDate(toDateKey());
+      setScheduleLoadError(null);
+    }).catch(() => {
+      if (!cancelled) {
+        const fallback = createDefaultStudySchedule();
+        setStudySchedule(fallback);
+        setScheduleStartDate(fallback.startDate);
+        setScheduleExamDate(fallback.examDate ?? "");
+        setNoExamDateYet(fallback.examDate === null);
+        setSelectedDaysOff(fallback.daysOff);
+        setDailyStudyHours(fallback.dailyStudyHours ?? 2);
+        setScheduleCursorDate(toDateKey());
+        setScheduleLoadError(null);
+      }
+    }).finally(() => { if (!cancelled) setIsStudyScheduleLoaded(true); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!scheduleToastMessage) return;
+    const timeout = window.setTimeout(() => setScheduleToastMessage(null), 8000);
+    return () => window.clearTimeout(timeout);
+  }, [scheduleToastMessage]);
+
+  const openScheduleDialog = (mode: "create" | "rebalance" | "settings"): void => {
+    const today = toDateKey();
+    setScheduleDialogMode(mode);
+    setScheduleFormError(null);
+    setIsDaysOffDropdownOpen(false);
+    if (mode === "create" || !studySchedule) {
+      setScheduleStartDate(today);
+      setScheduleExamDate(addDaysToDateKey(today, 29));
+      setNoExamDateYet(false);
+      setSelectedDaysOff("Sunday");
+      setDailyStudyHours(2);
+    } else {
+      setScheduleStartDate(today > studySchedule.startDate ? today : studySchedule.startDate);
+      setScheduleExamDate(studySchedule.examDate && studySchedule.examDate > today
+        ? studySchedule.examDate
+        : addDaysToDateKey(today, 29));
+      setNoExamDateYet(studySchedule.examDate === null);
+      setSelectedDaysOff(studySchedule.daysOff);
+      setDailyStudyHours(studySchedule.dailyStudyHours ?? 2);
+    }
+    setIsScheduleModalOpen(true);
+  };
+
+  const applyScheduleSettings = async (): Promise<void> => {
+    const today = toDateKey();
+    if (!scheduleStartDate) { setScheduleFormError("Choose a start date."); return; }
+    if (scheduleStartDate < today) { setScheduleFormError("The schedule cannot start in the past."); return; }
+    if (!noExamDateYet && !scheduleExamDate) { setScheduleFormError("Choose an exam date or select the no exam date option."); return; }
+    if (!noExamDateYet && scheduleExamDate <= scheduleStartDate) {
+      setScheduleFormError("The exam date must be after the schedule start date.");
+      return;
+    }
+
+    const settings = {
+      startDate: scheduleStartDate,
+      examDate: noExamDateYet ? null : scheduleExamDate,
+      daysOff: selectedDaysOff,
+      dailyStudyHours
+    } as const;
+    const previousSchedule = studySchedule;
+    try {
+      const nextSchedule = scheduleDialogMode === "rebalance"
+        ? await rebalanceStudentStudySchedule(settings)
+        : await saveStudentScheduleSettings(settings);
+      const summary = getScheduleSummary(nextSchedule);
+      setScheduleUndoSnapshot(previousSchedule);
+      setStudySchedule(nextSchedule);
+      setScheduleCursorDate(settings.startDate);
+      setScheduleView("month");
+      setScheduleFormError(null);
+      setScheduleLoadError(null);
+      setIsScheduleModalOpen(false);
+      setScheduleToastMessage(summary.averageHoursPerDay > 0
+        ? `Schedule updated. Plan for about ${summary.averageHoursPerDay} hours of study each day.`
+        : "Schedule dates updated. All assignments are already complete.");
+    } catch (cause) {
+      setScheduleFormError(cause instanceof Error ? cause.message : "Could not save schedule settings.");
+    }
+  };
+
+  const undoScheduleChange = async (): Promise<void> => {
+    if (!scheduleUndoSnapshot) return;
+    try {
+      const restored = await replaceStudentStudySchedule(scheduleUndoSnapshot);
+      setStudySchedule(restored);
+      setScheduleStartDate(restored.startDate);
+      setScheduleExamDate(restored.examDate ?? "");
+      setNoExamDateYet(restored.examDate === null);
+      setSelectedDaysOff(restored.daysOff);
+      setDailyStudyHours(restored.dailyStudyHours ?? 2);
+      setScheduleCursorDate(toDateKey());
+      setScheduleUndoSnapshot(null);
+      setScheduleToastMessage(null);
+    } catch (cause) { setScheduleToastMessage(cause instanceof Error ? cause.message : "Could not restore schedule."); }
+  };
+
+  const toggleScheduleTask = async (taskId: string): Promise<void> => {
+    if (!studySchedule) return;
+    const task = studySchedule.tasks.find((item) => item.id === taskId);
+    if (!task) return;
+    try {
+      const next = await updateStudentScheduleAssignment(taskId, { completed: !task.completed });
+      setStudySchedule(next);
+      setScheduleUndoSnapshot(null);
+      setScheduleToastMessage(null);
+    } catch (cause) { setScheduleToastMessage(cause instanceof Error ? cause.message : "Could not update assignment."); }
+  };
+
+  const removeScheduleTask = async (taskId: string): Promise<void> => {
+    if (!studySchedule) return;
+    const task = studySchedule.tasks.find((item) => item.id === taskId);
+    try {
+      setScheduleUndoSnapshot(studySchedule);
+      setStudySchedule(await deleteStudentScheduleAssignment(taskId));
+      setScheduleToastMessage(`Assignment removed${task ? `: ${task.title}` : ""}.`);
+    } catch (cause) { setScheduleUndoSnapshot(null); setScheduleToastMessage(cause instanceof Error ? cause.message : "Could not remove assignment."); }
+  };
+
+  const moveScheduleTask = async (taskId: string, date: string): Promise<void> => {
+    try {
+      const next = await updateStudentScheduleAssignment(taskId, { date });
+      setStudySchedule(next);
+      setSelectedScheduleTask(next.tasks.find((task) => task.id === taskId) ?? null);
+    } catch (cause) { setScheduleToastMessage(cause instanceof Error ? cause.message : "Could not move assignment."); }
+  };
+
+  const moveScheduleCursor = (direction: -1 | 1): void => {
+    if (scheduleView === "month") {
+      setScheduleCursorDate((current) => {
+        const date = new Date(`${current}T00:00:00`);
+        date.setMonth(date.getMonth() + direction);
+        return toDateKey(date);
+      });
+      return;
+    }
+    setScheduleCursorDate((current) => addDaysToDateKey(current, (scheduleView === "day" ? 1 : 7) * direction));
+  };
 
   const formatDisplayDate = (dateStr: string): string => {
     if (!dateStr) return "Select a date";
@@ -2392,14 +2839,14 @@ const StudentDashboard = (): ReactElement => {
     selectedSubjectId === "pharmacology"
       ? pharmacologyCrashTopics
       : selectedSubjectId === "mental-health"
-      ? mentalHealthCrashTopics
-      : selectedSubjectId === "maternal-newborn"
-      ? maternalNewbornCrashTopics
-      : selectedSubjectId === "fundamentals"
-      ? fundamentalsCrashTopics
-      : selectedSubjectId === "child-health"
-      ? childHealthCrashTopics
-      : adultHealthCrashTopics;
+        ? mentalHealthCrashTopics
+        : selectedSubjectId === "maternal-newborn"
+          ? maternalNewbornCrashTopics
+          : selectedSubjectId === "fundamentals"
+            ? fundamentalsCrashTopics
+            : selectedSubjectId === "child-health"
+              ? childHealthCrashTopics
+              : adultHealthCrashTopics;
 
   const filteredCrashTopics = currentCrashTopics.filter((t) =>
     t.title.toLowerCase().includes(crashFilterQuery.toLowerCase())
@@ -2413,46 +2860,46 @@ const StudentDashboard = (): ReactElement => {
     selectedSubjectId === "management-of-care"
       ? managementOfCareCheatSheetCategories
       : selectedSubjectId === "pharmacology"
-      ? pharmacologyCheatSheetCategories
-      : selectedSubjectId === "mental-health"
-      ? mentalHealthCheatSheetCategories
-      : selectedSubjectId === "maternal-newborn"
-      ? maternalNewbornCheatSheetCategories
-      : selectedSubjectId === "fundamentals"
-      ? fundamentalsCheatSheetCategories
-      : selectedSubjectId === "child-health"
-      ? childHealthCheatSheetCategories
-      : cheatSheetCategories;
+        ? pharmacologyCheatSheetCategories
+        : selectedSubjectId === "mental-health"
+          ? mentalHealthCheatSheetCategories
+          : selectedSubjectId === "maternal-newborn"
+            ? maternalNewbornCheatSheetCategories
+            : selectedSubjectId === "fundamentals"
+              ? fundamentalsCheatSheetCategories
+              : selectedSubjectId === "child-health"
+                ? childHealthCheatSheetCategories
+                : cheatSheetCategories;
 
   const currentCheatSheets =
     selectedSubjectId === "management-of-care"
       ? managementOfCareCheatSheets
       : selectedSubjectId === "pharmacology"
-      ? pharmacologyCheatSheets
-      : selectedSubjectId === "mental-health"
-      ? mentalHealthCheatSheets
-      : selectedSubjectId === "maternal-newborn"
-      ? maternalNewbornCheatSheets
-      : selectedSubjectId === "fundamentals"
-      ? fundamentalsCheatSheets
-      : selectedSubjectId === "child-health"
-      ? childHealthCheatSheets
-      : adultHealthCheatSheets;
+        ? pharmacologyCheatSheets
+        : selectedSubjectId === "mental-health"
+          ? mentalHealthCheatSheets
+          : selectedSubjectId === "maternal-newborn"
+            ? maternalNewbornCheatSheets
+            : selectedSubjectId === "fundamentals"
+              ? fundamentalsCheatSheets
+              : selectedSubjectId === "child-health"
+                ? childHealthCheatSheets
+                : adultHealthCheatSheets;
 
   const allCheatCategoryLabel =
     selectedSubjectId === "management-of-care"
       ? "All Management of Care"
       : selectedSubjectId === "pharmacology"
-      ? "All Pharmacology"
-      : selectedSubjectId === "mental-health"
-      ? "All Mental Health"
-      : selectedSubjectId === "maternal-newborn"
-      ? "All Maternal & Newborn Health"
-      : selectedSubjectId === "fundamentals"
-      ? "All Fundamentals"
-      : selectedSubjectId === "child-health"
-      ? "All Child Health"
-      : "All Adult Health";
+        ? "All Pharmacology"
+        : selectedSubjectId === "mental-health"
+          ? "All Mental Health"
+          : selectedSubjectId === "maternal-newborn"
+            ? "All Maternal & Newborn Health"
+            : selectedSubjectId === "fundamentals"
+              ? "All Fundamentals"
+              : selectedSubjectId === "child-health"
+                ? "All Child Health"
+                : "All Adult Health";
 
   const effectiveCheatSystem =
     selectedCheatSystem.startsWith("All") || !currentCheatCategories.includes(selectedCheatSystem)
@@ -2465,6 +2912,206 @@ const StudentDashboard = (): ReactElement => {
       effectiveCheatSystem === allCheatCategoryLabel || c.system === effectiveCheatSystem;
     return matchesQuery && matchesCategory;
   });
+
+    const renderScheduleAssignmentModal = () => {
+    if (!selectedScheduleTask) return null;
+    const task = selectedScheduleTask;
+    const actionLabel = task.action.replaceAll("-", " ");
+    const subjectName = task.subjectId
+      ? task.subjectId.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")
+      : "Clinical Practice";
+
+    return (
+      <div
+        className="sd-modal-overlay"
+        onClick={() => setSelectedScheduleTask(null)}
+        role="dialog"
+        aria-modal="true"
+        aria-label={task.title}
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 1100,
+          backgroundColor: "rgba(15, 23, 42, 0.65)",
+          backdropFilter: "blur(4px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "16px"
+        }}
+      >
+        <div
+          className="sd-modal sd-assignment-modal"
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            maxWidth: "520px",
+            width: "100%",
+            borderRadius: "16px",
+            padding: "24px 28px",
+            background: "#ffffff",
+            boxShadow: "0 25px 50px -12px rgba(15, 23, 42, 0.25)",
+            border: "1px solid #e2e8f0"
+          }}
+        >
+          {/* Header */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  padding: "4px 10px",
+                  borderRadius: "6px",
+                  fontSize: "12px",
+                  fontWeight: 700,
+                  textTransform: "capitalize",
+                  background: task.category === "green" ? "#dcfce7" : task.category === "teal" ? "#ccfbf1" : "#ede9fe",
+                  color: task.category === "green" ? "#166534" : task.category === "teal" ? "#115e59" : "#4338ca"
+                }}
+              >
+                {actionLabel}
+              </span>
+              <span style={{ fontSize: "13px", color: "#64748b", fontWeight: 500, display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                <Clock size={13} /> {formatScheduleDuration(task.durationMinutes)}
+              </span>
+              <span style={{ fontSize: "13px", color: "#64748b", fontWeight: 500, display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                <CalendarDays size={13} /> {task.date}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelectedScheduleTask(null)}
+              style={{
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                color: "#94a3b8",
+                padding: "4px",
+                borderRadius: "6px",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center"
+              }}
+              aria-label="Close dialog"
+            >
+              <X size={20} />
+            </button>
+          </div>
+
+          {/* Title */}
+          <h2 style={{ fontSize: "20px", fontWeight: 700, color: "#1e1b4b", margin: "0 0 10px 0", lineHeight: 1.3 }}>
+            {task.title}
+          </h2>
+
+          {/* Subject Badge */}
+          <div style={{ marginBottom: "14px" }}>
+            <span style={{ fontSize: "12px", color: "#64748b", fontWeight: 600 }}>Subject: </span>
+            <span style={{ fontSize: "13px", color: "#4f46e5", fontWeight: 700 }}>{subjectName}</span>
+          </div>
+
+          {/* Description */}
+          <p style={{ fontSize: "14px", color: "#475569", margin: "0 0 20px 0", lineHeight: 1.55 }}>
+            {task.description ||
+              `Complete your scheduled NCLEX practice for ${subjectName}. Practicing questions on schedule strengthens clinical judgment and retention for test day.`}
+          </p>
+
+          {/* Status Box */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "12px 16px",
+              background: task.completed ? "#f0fdf4" : "#f8fafc",
+              borderRadius: "10px",
+              marginBottom: "24px",
+              border: task.completed ? "1px solid #bbf7d0" : "1px solid #e2e8f0"
+            }}
+          >
+            <div>
+              <div style={{ fontSize: "13px", fontWeight: 700, color: task.completed ? "#166534" : "#334155" }}>
+                {task.completed ? "✓ Assignment Completed" : "Assignment Pending"}
+              </div>
+              <div style={{ fontSize: "12px", color: task.completed ? "#15803d" : "#64748b" }}>
+                {task.completed ? "Recorded in your study streak" : "Not yet marked complete"}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                void toggleScheduleTask(task.id);
+                setSelectedScheduleTask((prev) => prev ? { ...prev, completed: !prev.completed } : null);
+              }}
+              style={{
+                border: "none",
+                background: task.completed ? "#dcfce7" : "#e0e7ff",
+                color: task.completed ? "#15803d" : "#4338ca",
+                padding: "7px 14px",
+                borderRadius: "8px",
+                fontWeight: 600,
+                fontSize: "12px",
+                cursor: "pointer",
+                transition: "all 0.15s ease"
+              }}
+            >
+              {task.completed ? "Mark as Incomplete" : "Mark as Completed"}
+            </button>
+          </div>
+
+          {/* Footer Actions */}
+          <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+            <button
+              type="button"
+              onClick={() => setSelectedScheduleTask(null)}
+              style={{
+                padding: "10px 18px",
+                borderRadius: "10px",
+                border: "1px solid #cbd5e1",
+                background: "#ffffff",
+                color: "#475569",
+                fontWeight: 600,
+                fontSize: "14px",
+                cursor: "pointer"
+              }}
+            >
+              Close
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const targetTask = selectedScheduleTask;
+                setSelectedScheduleTask(null);
+                openScheduleTask(targetTask);
+              }}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "8px",
+                padding: "10px 22px",
+                borderRadius: "10px",
+                border: "none",
+                background: "linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)",
+                color: "#ffffff",
+                fontWeight: 700,
+                fontSize: "14px",
+                cursor: "pointer",
+                boxShadow: "0 4px 12px rgba(99, 102, 241, 0.35)"
+              }}
+            >
+              <Play size={16} fill="#ffffff" />
+              {task.action === "daily-question" || task.action === "standalone"
+                ? "Start Assignment Question"
+                : task.action === "create-test"
+                ? "Create Custom Test"
+                : task.action === "case-study"
+                ? "Open Case Study"
+                : "Open Assignment"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const renderUpgradeModal = () => {
     if (!isUpgradeModalOpen) return null;
@@ -2488,7 +3135,7 @@ const StudentDashboard = (): ReactElement => {
                 {"★★★★★"}
               </div>
               <p className="sd-upg-quote">
-                &ldquo;I am a repeat test taker, and I would not have passed my NCLEX this time around if it weren&apos;t for NCLEX Bootcamp. It looked almost identical to the actual exam.&rdquo;
+                &ldquo;I am a repeat test taker, and I would not have passed my NCLEX this time around if it weren&apos;t for NCLEXLab. It looked almost identical to the actual exam.&rdquo;
               </p>
               <div className="sd-upg-author">
                 <div className="sd-upg-avatar-wrap">
@@ -2511,7 +3158,7 @@ const StudentDashboard = (): ReactElement => {
                 {"★★★★★"}
               </div>
               <p className="sd-upg-quote">
-                &ldquo;When I found NCLEX Bootcamp I felt like I had found heaven. It is so well organized and simplified and even has study schedules available which I found to be one of my favorite parts of the entire site!&rdquo;
+                &ldquo;When I found NCLEXLab I felt like I had found heaven. It is so well organized and simplified and even has study schedules available which I found to be one of my favorite parts of the entire site!&rdquo;
               </p>
               <div className="sd-upg-author">
                 <div className="sd-upg-avatar-wrap">
@@ -2948,14 +3595,126 @@ const StudentDashboard = (): ReactElement => {
     );
   };
 
+  const scheduleSummary = studySchedule ? getScheduleSummary(studySchedule) : null;
+  const scheduleEndDate = studySchedule ? getScheduleEndDate(studySchedule) : "";
+  const visibleScheduleDates = studySchedule
+    ? scheduleView === "day"
+      ? [scheduleCursorDate]
+      : scheduleView === "week"
+        ? getScheduleDateRange(getWeekStartDate(scheduleCursorDate), addDaysToDateKey(getWeekStartDate(scheduleCursorDate), 6))
+        : getScheduleDateRange(getWeekStartDate(`${scheduleCursorDate.slice(0, 7)}-01`), addDaysToDateKey(getWeekStartDate(`${scheduleCursorDate.slice(0, 7)}-01`), 41))
+    : [];
+  const formatScheduleDuration = (minutes: number): string => {
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return hours > 0 ? `${hours}h${remainingMinutes > 0 ? ` ${remainingMinutes}m` : ""}` : `${remainingMinutes}m`;
+  };
+  const formatScheduleDay = (dateKey: string): string =>
+    new Date(`${dateKey}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", day: "numeric" });
+  const tasksOnScheduleDate = (dateKey: string): readonly StudyScheduleTask[] =>
+    studySchedule?.tasks.filter((task) => task.date === dateKey && (
+      scheduleFilter === "all" || (scheduleFilter === "questions"
+        ? task.action === "create-test" || task.action === "daily-question" || task.action === "case-study" || task.action === "standalone" || task.action === "review"
+        : task.action === "study-guide" || task.action === "video" || task.action === "study-group")
+    )) ?? [];
+  const scheduleMinutesOnDate = (dateKey: string): number =>
+    tasksOnScheduleDate(dateKey).reduce((minutes, task) => minutes + (task.completed ? 0 : task.durationMinutes), 0);
+  const isScheduleDayOff = (dateKey: string): boolean => {
+    if (!studySchedule || studySchedule.daysOff === "None (7 days/week)") return false;
+    return new Date(`${dateKey}T00:00:00`).toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" }) === studySchedule.daysOff;
+  };
+  const isWithinSchedule = (dateKey: string): boolean => Boolean(studySchedule && dateKey >= studySchedule.startDate && dateKey <= scheduleEndDate);
+  const scheduleCountdown = studySchedule?.examDate
+    ? Math.max(0, Math.ceil(((Date.parse(`${studySchedule.examDate}T00:00:00Z`) - Date.parse(`${toDateKey()}T00:00:00Z`)) / 86_400_000)))
+    : null;
+  const scheduleMonthLabel = new Date(`${scheduleCursorDate}T00:00:00`).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+
+  const openScheduleTask = (task: StudyScheduleTask): void => {
+    switch (task.action) {
+      case "create-test":
+        setActiveTab("home");
+        setIsCreateTestOpen(true);
+        break;
+      case "daily-question": {
+        const pool = standaloneQuestions.length > 0 ? standaloneQuestions : getStoredStandaloneQuestions();
+        if (pool.length > 0) {
+          const charCodeSum = task.id.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0);
+          const qIndex = Math.abs(charCodeSum) % pool.length;
+          startStandaloneExam(pool, qIndex);
+        } else {
+          setActiveTab("home");
+          setIsCreateTestOpen(true);
+        }
+        break;
+      }
+      case "standalone": {
+        const pool = standaloneQuestions.length > 0 ? standaloneQuestions : getStoredStandaloneQuestions();
+        const subjectQuestions = task.subjectId
+          ? pool.filter((q) => q.subjectId === task.subjectId)
+          : pool;
+        const targetList = subjectQuestions.length > 0 ? subjectQuestions : pool;
+        if (targetList.length > 0) {
+          startStandaloneExam(targetList, 0);
+        } else {
+          setSelectedSubjectId(task.subjectId ?? "adult-health");
+          setSubjectSubTab("standalone");
+          setActiveTab("subject");
+        }
+        break;
+      }
+      case "case-study": {
+        setSelectedSubjectId(task.subjectId ?? "adult-health");
+        setSubjectSubTab("case-studies");
+        setActiveTab("subject");
+        break;
+      }
+      case "review": {
+        const pool = standaloneQuestions.length > 0 ? standaloneQuestions : getStoredStandaloneQuestions();
+        const reviewPool = pool.filter((q) => q.answered || q.bookmarked || q.poolStatus === "learning" || q.poolStatus === "reviewing");
+        if (reviewPool.length > 0) {
+          startStandaloneExam(reviewPool, 0);
+        } else {
+          setActiveTab("previous-tests");
+        }
+        break;
+      }
+      case "study-guide":
+        setActiveTab("strategy-course");
+        break;
+      case "video":
+        setActiveTab("crash-course");
+        break;
+      case "study-group":
+        window.open("https://www.facebook.com/Yoursellhub", "_blank", "noopener,noreferrer");
+        break;
+    }
+  };
+
+  const schedulePreview = (() => {
+    const settings = {
+      startDate: scheduleStartDate,
+      examDate: noExamDateYet ? null : scheduleExamDate,
+      daysOff: selectedDaysOff,
+      dailyStudyHours
+    } as const;
+    try {
+      return scheduleDialogMode === "create" || !studySchedule
+        ? createStudySchedule(settings)
+        : rebalanceStudySchedule(studySchedule, settings);
+    } catch {
+      return null;
+    }
+  })();
+  const schedulePreviewSummary = schedulePreview ? getScheduleSummary(schedulePreview) : null;
+
   if (isTestActive) {
     const caseResults = calculateCaseResults();
     const standaloneQuestionsToUse =
       activeStandaloneQuestionsList.length > 0
         ? activeStandaloneQuestionsList
         : standaloneQuestions.length > 0
-        ? standaloneQuestions
-        : [];
+          ? standaloneQuestions
+          : [];
     const currentStandaloneQuestion =
       standaloneQuestionsToUse[testQuestionIndex] || standaloneQuestionsToUse[0] || {
         id: "sq-fallback",
@@ -3015,8 +3774,8 @@ const StudentDashboard = (): ReactElement => {
                 {isResultsScreenActive
                   ? "Exam Completed"
                   : activeTestExamType === "standalone"
-                  ? `Question ${testQuestionIndex + 1} of ${standaloneQuestionsToUse.length}`
-                  : `Question ${testQuestionIndex + 1} of 6`}
+                    ? `Question ${testQuestionIndex + 1} of ${standaloneQuestionsToUse.length}`
+                    : `Question ${testQuestionIndex + 1} of 6`}
               </span>
             </div>
 
@@ -3161,7 +3920,141 @@ const StudentDashboard = (): ReactElement => {
             VIEW 1: FINAL EXAM RESULTS SCREEN ("end m submit kr ky result bi show hona cheyey")
             ===================================================================== */}
         {isResultsScreenActive ? (
-          activeTestExamType === "standalone" ? (
+          activeTestExamType === "cat" ? (
+            <div className="sd-exam-results-screen">
+              <div className="sd-results-container" style={{ maxWidth: "880px" }}>
+                {(() => {
+                  const summary = catExamSummary ?? (catSession ? generateCatExamSummary(catSession) : null);
+                  if (!summary) return <div>No exam summary available.</div>;
+                  const isPass = summary.passStatus === "PASS";
+
+                  return (
+                    <>
+                      {/* Hero Banner */}
+                      <div className="sd-results-hero" style={{
+                        background: isPass
+                          ? "linear-gradient(135deg, #10b981 0%, #059669 100%)"
+                          : "linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)"
+                      }}>
+                        <div className="sd-results-hero-left">
+                          <div className="sd-results-trophy-circle" style={{ backgroundColor: "rgba(255,255,255,0.2)" }}>
+                            <Target size={30} color="#ffffff" />
+                          </div>
+                          <div>
+                            <h2 className="sd-results-hero-title" style={{ color: "#ffffff" }}>
+                              {isPass
+                                ? `Passed! CAT Readiness Exam ${summary.examNumber}`
+                                : `Did Not Pass — CAT Readiness Exam ${summary.examNumber}`}
+                            </h2>
+                            <p className="sd-results-hero-subtitle" style={{ color: "rgba(255,255,255,0.88)" }}>
+                              {summary.stopReason} · Real NCLEX Computerized Adaptive Testing
+                            </p>
+                          </div>
+                        </div>
+                        <div className="sd-results-pass-badge" style={{
+                          backgroundColor: "#ffffff",
+                          color: isPass ? "#065f46" : "#991b1b"
+                        }}>
+                          {summary.passProbability}% Likelihood of Passing
+                        </div>
+                      </div>
+
+                      {/* Stats 4-Card Grid */}
+                      <div className="sd-results-stats-grid">
+                        <div className="sd-results-stat-box">
+                          <div className={`sd-results-stat-val ${isPass ? "green" : ""}`}>
+                            {summary.accuracyPercent}%
+                          </div>
+                          <div className="sd-results-stat-label">
+                            Accuracy ({summary.totalQuestions} Questions)
+                          </div>
+                        </div>
+                        <div className="sd-results-stat-box">
+                          <div className="sd-results-stat-val">
+                            {summary.finalTheta > 0 ? `+${summary.finalTheta}` : `${summary.finalTheta}`}
+                          </div>
+                          <div className="sd-results-stat-label">Ability (θ Logits)</div>
+                        </div>
+                        <div className="sd-results-stat-box">
+                          <div className="sd-results-stat-val">±{summary.finalSem}</div>
+                          <div className="sd-results-stat-label">Standard Error (SEM)</div>
+                        </div>
+                        <div className="sd-results-stat-box">
+                          <div className="sd-results-stat-val green">
+                            {summary.passProbability}%
+                          </div>
+                          <div className="sd-results-stat-label">NCLEX Pass Probability</div>
+                        </div>
+                      </div>
+
+                      {/* Client Needs Category Mastery Breakdown */}
+                      <div style={{ marginTop: "24px", backgroundColor: "#ffffff", borderRadius: "10px", border: "1px solid #e2e8f0", padding: "20px" }}>
+                        <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", marginBottom: "14px" }}>
+                          Performance by NCLEX Client Needs Area
+                        </h3>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                          {summary.categoryBreakdown.map((cat) => (
+                            <div key={cat.category} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px" }}>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", fontWeight: 600, color: "#334155", marginBottom: "4px" }}>
+                                  <span>{cat.category}</span>
+                                  <span>{cat.accuracy}% ({cat.correct}/{cat.total || 1})</span>
+                                </div>
+                                <div style={{ width: "100%", height: "8px", backgroundColor: "#f1f5f9", borderRadius: "999px", overflow: "hidden" }}>
+                                  <div style={{
+                                    width: `${cat.accuracy}%`,
+                                    height: "100%",
+                                    backgroundColor: cat.accuracy >= 75 ? "#10b981" : cat.accuracy >= 60 ? "#f59e0b" : "#ef4444",
+                                    borderRadius: "999px"
+                                  }} />
+                                </div>
+                              </div>
+                              <span style={{
+                                fontSize: "11px",
+                                fontWeight: 700,
+                                padding: "3px 8px",
+                                borderRadius: "4px",
+                                backgroundColor: cat.status === "Above Passing Standard" ? "#dcfce7" : cat.status === "Near Passing Standard" ? "#fef3c7" : "#fee2e2",
+                                color: cat.status === "Above Passing Standard" ? "#166534" : cat.status === "Near Passing Standard" ? "#92400e" : "#991b1b",
+                                whiteSpace: "nowrap"
+                              }}>
+                                {cat.status}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Action Buttons */}
+                      <div className="sd-results-actions" style={{ marginTop: "28px" }}>
+                        <button
+                          type="button"
+                          className="sd-results-btn-primary"
+                          onClick={() => {
+                            setTestQuestionIndex(0);
+                            setIsResultsScreenActive(false);
+                          }}
+                        >
+                          Review All Adaptive Questions
+                        </button>
+                        <button
+                          type="button"
+                          className="sd-results-btn-secondary"
+                          onClick={() => {
+                            setIsTestActive(false);
+                            setIsResultsScreenActive(false);
+                            setActiveTab("cat-exams");
+                          }}
+                        >
+                          Return to CAT Exams
+                        </button>
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+          ) : activeTestExamType === "standalone" ? (
             <div className="sd-exam-results-screen">
               <div className="sd-results-container">
                 {(() => {
@@ -3332,295 +4225,272 @@ const StudentDashboard = (): ReactElement => {
             </div>
           ) : (
             <div className="sd-exam-results-screen">
-            <div className="sd-results-container">
-              {/* Hero Banner */}
-              <div className="sd-results-hero">
-                <div className="sd-results-hero-left">
-                  <div className="sd-results-trophy-circle">
-                    <Trophy size={30} />
+              <div className="sd-results-container">
+                {/* Hero Banner */}
+                <div className="sd-results-hero">
+                  <div className="sd-results-hero-left">
+                    <div className="sd-results-trophy-circle">
+                      <Trophy size={30} />
+                    </div>
+                    <div>
+                      <h2 className="sd-results-hero-title">
+                        {caseResults.isPassing ? "Congratulations! Exam Completed" : "Exam Completed"}
+                      </h2>
+                      <p className="sd-results-hero-subtitle">
+                        NCLEX-RN Next Gen Case Study · Child Health &amp; Gastrointestinal (Intussusception)
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <h2 className="sd-results-hero-title">
-                      {caseResults.isPassing ? "Congratulations! Exam Completed" : "Exam Completed"}
-                    </h2>
-                    <p className="sd-results-hero-subtitle">
-                      NCLEX-RN Next Gen Case Study · Child Health &amp; Gastrointestinal (Intussusception)
+                  <div className="sd-results-pass-badge">
+                    {caseResults.isPassing ? "Likely to Pass (Very High)" : "Review Needed"}
+                  </div>
+                </div>
+
+                {/* Stats 4-Card Grid */}
+                <div className="sd-results-stats-grid">
+                  <div className="sd-results-stat-box">
+                    <div className={`sd-results-stat-val ${caseResults.isPassing ? "green" : ""}`}>
+                      {caseResults.percentage}%
+                    </div>
+                    <div className="sd-results-stat-label">
+                      Score ({caseResults.totalScore} / {caseResults.maxScore} Pts)
+                    </div>
+                  </div>
+
+                  <div className="sd-results-stat-box">
+                    <div className="sd-results-stat-val green">
+                      {caseResults.isPassing ? "Very High" : "Moderate"}
+                    </div>
+                    <div className="sd-results-stat-label">Pass Probability</div>
+                  </div>
+
+                  <div className="sd-results-stat-box">
+                    <div className="sd-results-stat-val">
+                      {formatTestTimer(testTimerSeconds)}
+                    </div>
+                    <div className="sd-results-stat-label">Time Spent</div>
+                  </div>
+
+                  <div className="sd-results-stat-box">
+                    <div className="sd-results-stat-val green">Level 3</div>
+                    <div className="sd-results-stat-label">Clinical Judgment</div>
+                  </div>
+                </div>
+
+                {/* Performance Breakdown Table */}
+                <div className="sd-results-breakdown-card">
+                  <h3 className="sd-results-sec-heading">Performance by Question Item</h3>
+                  <table className="sd-results-table">
+                    <thead>
+                      <tr>
+                        <th>Item</th>
+                        <th>Clinical Judgment Step</th>
+                        <th>Points</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>Item 1</td>
+                        <td>Recognize Cues: Immediate Follow-up Clinical Findings</td>
+                        <td>{caseResults.item1Score} / 5 pts</td>
+                        <td>
+                          <span className={`sd-results-pill ${caseResults.item1Score >= 4 ? "correct" : "partial"}`}>
+                            {caseResults.item1Score === 5 ? "All Correct" : `${caseResults.item1Score} / 5 Correct`}
+                          </span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>Item 2</td>
+                        <td>Analyze Cues: Hallmark Features of Intussusception</td>
+                        <td>{caseResults.item2Score} / 4 pts</td>
+                        <td>
+                          <span className={`sd-results-pill ${caseResults.item2Score >= 3 ? "correct" : "partial"}`}>
+                            {caseResults.item2Score === 4 ? "All Correct" : `${caseResults.item2Score} / 4 Correct`}
+                          </span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>Item 3</td>
+                        <td>Prioritize Hypotheses: Pathophysiological Mechanism</td>
+                        <td>{caseResults.item3Score} / 1 pt</td>
+                        <td>
+                          <span className={`sd-results-pill ${caseResults.item3Score === 1 ? "correct" : "partial"}`}>
+                            {caseResults.item3Score === 1 ? "Correct" : "Incorrect"}
+                          </span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>Item 4</td>
+                        <td>Generate Solutions: Anticipated Nursing Interventions</td>
+                        <td>{caseResults.item4Score} / 6 pts</td>
+                        <td>
+                          <span className={`sd-results-pill ${caseResults.item4Score >= 5 ? "correct" : "partial"}`}>
+                            {caseResults.item4Score === 6 ? "All Correct" : `${caseResults.item4Score} / 6 Correct`}
+                          </span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>Item 5</td>
+                        <td>Take Action: Priority Provider Order (Fluid Resuscitation)</td>
+                        <td>{caseResults.item5Score} / 1 pt</td>
+                        <td>
+                          <span className={`sd-results-pill ${caseResults.item5Score === 1 ? "correct" : "partial"}`}>
+                            {caseResults.item5Score === 1 ? "Correct" : "Incorrect"}
+                          </span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>Item 6</td>
+                        <td>Evaluate Outcomes: Post-Reduction Patient Response</td>
+                        <td>{caseResults.item6Score} / 5 pts</td>
+                        <td>
+                          <span className={`sd-results-pill ${caseResults.item6Score >= 4 ? "correct" : "partial"}`}>
+                            {caseResults.item6Score === 5 ? "All Correct" : `${caseResults.item6Score} / 5 Correct`}
+                          </span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="sd-results-actions-row">
+                  <button
+                    type="button"
+                    className="sd-results-btn-primary"
+                    onClick={() => {
+                      setIsResultsScreenActive(false);
+                      setTestQuestionIndex(0);
+                    }}
+                  >
+                    Review Questions &amp; Rationales
+                  </button>
+
+                  <button
+                    type="button"
+                    className="sd-results-btn-secondary"
+                    onClick={() => {
+                      setCaseItem1SelectedTokens([]);
+                      setIsCaseItem1Submitted(false);
+                      setCaseItem2Matrix({});
+                      setIsCaseItem2Submitted(false);
+                      setCaseItem3Slot1(null);
+                      setCaseItem3Slot2(null);
+                      setIsCaseItem3Submitted(false);
+                      setCaseItem4Selections({});
+                      setIsCaseItem4Submitted(false);
+                      setCaseItem5Selected(null);
+                      setIsCaseItem5Submitted(false);
+                      setCaseItem6FollowUp([]);
+                      setIsCaseItem6Submitted(false);
+                      setTestTimerSeconds(0);
+                      setTestQuestionIndex(0);
+                      setIsResultsScreenActive(false);
+                    }}
+                  >
+                    Retake Case Study
+                  </button>
+
+                  <button
+                    type="button"
+                    className="sd-results-btn-secondary"
+                    onClick={() => {
+                      setIsTestActive(false);
+                      setIsResultsScreenActive(false);
+                    }}
+                  >
+                    Return to Dashboard
+                  </button>
+                </div>
+              </div>
+            </div>
+          )) : (activeTestExamType === "standalone" || activeTestExamType === "cat") ? (
+            <div className="sd-test-body">
+              {/* Left Column: Clinical Context & Vignette */}
+              <section className="sd-test-ehr-pane" aria-label="Clinical Vignette">
+                <div className="sd-case-intro-banner">
+                  {activeTestExamType === "cat"
+                    ? `Next Generation NCLEX® · CAT Adaptive Readiness Exam ${catSession?.examNumber ?? 1}`
+                    : "Next Generation NCLEX® · Standalone Clinical Question"}
+                </div>
+
+                <div className="sd-case-item-meta">
+                  <div className="sd-case-item-number">
+                    {activeTestExamType === "cat"
+                      ? `Item ${testQuestionIndex + 1} (Ability θ: ${catSession?.currentTheta !== undefined && catSession.currentTheta > 0 ? `+${catSession.currentTheta}` : `${catSession?.currentTheta ?? 0}`})`
+                      : `Question ${testQuestionIndex + 1} of ${standaloneQuestionsToUse.length}`}
+                  </div>
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", marginTop: "6px" }}>
+                    <span style={{ backgroundColor: "#dbeafe", color: "#1e40af", padding: "2px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: 700 }}>
+                      {currentStandaloneQuestion.subjectName}
+                    </span>
+                    <span style={{ color: "#64748b", fontSize: "11.5px" }}>{currentStandaloneQuestion.type}</span>
+                    <span style={{ color: "#94a3b8", fontSize: "11.5px" }}>•</span>
+                    <span style={{ color: "#64748b", fontSize: "11.5px" }}>By {currentStandaloneQuestion.author}</span>
+                  </div>
+                </div>
+
+                <div className="sd-test-ehr-card" style={{ marginTop: "14px" }}>
+                  <h4 className="sd-ehr-dept-title" style={{ color: "#007399", marginBottom: "10px", fontSize: "15px" }}>
+                    {currentStandaloneQuestion.title}
+                  </h4>
+                  <div style={{ fontSize: "13.5px", lineHeight: "1.75", color: "#1e293b", backgroundColor: "#f8fafc", padding: "16px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                    {currentStandaloneQuestion.stem}
+                  </div>
+
+                  <div style={{ marginTop: "16px", padding: "14px", backgroundColor: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "8px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "#166534", fontWeight: 700, fontSize: "12px", marginBottom: "4px" }}>
+                      <CheckCircle2 size={15} />
+                      <span>Clinical Judgment Measurement Framework</span>
+                    </div>
+                    <p style={{ margin: 0, fontSize: "12px", color: "#15803d", lineHeight: "1.5" }}>
+                      Synthesize client cues, recognize potential emergencies, and determine the priority nursing action or diagnosis.
                     </p>
                   </div>
                 </div>
-                <div className="sd-results-pass-badge">
-                  {caseResults.isPassing ? "Likely to Pass (Very High)" : "Review Needed"}
-                </div>
-              </div>
+              </section>
 
-              {/* Stats 4-Card Grid */}
-              <div className="sd-results-stats-grid">
-                <div className="sd-results-stat-box">
-                  <div className={`sd-results-stat-val ${caseResults.isPassing ? "green" : ""}`}>
-                    {caseResults.percentage}%
+              {/* Right Column: Question Choices, Submit, Detailed Rationale & AI */}
+              <main className="sd-test-question-pane" aria-label="Question & Choices">
+                <div className="sd-test-question-header">
+                  <div className="sd-test-q-meta">
+                    <span className="sd-test-q-number">Question {testQuestionIndex + 1}</span>
+                    <span className="sd-test-q-type">{currentStandaloneQuestion.type}</span>
                   </div>
-                  <div className="sd-results-stat-label">
-                    Score ({caseResults.totalScore} / {caseResults.maxScore} Pts)
-                  </div>
+                  <h3 className="sd-test-q-prompt">
+                    Select the best response for the clinical scenario described:
+                  </h3>
                 </div>
 
-                <div className="sd-results-stat-box">
-                  <div className="sd-results-stat-val green">
-                    {caseResults.isPassing ? "Very High" : "Moderate"}
-                  </div>
-                  <div className="sd-results-stat-label">Pass Probability</div>
-                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "16px" }}>
+                  {currentStandaloneQuestion.options.map((opt, optIdx) => {
+                    const isSelected = currentStandaloneAnswer.selectedOption === optIdx;
+                    const isCorrect = optIdx === currentStandaloneQuestion.correctIndex;
+                    let border = "1px solid #cbd5e1";
+                    let bg = "#ffffff";
+                    let color = "#1e293b";
 
-                <div className="sd-results-stat-box">
-                  <div className="sd-results-stat-val">
-                    {formatTestTimer(testTimerSeconds)}
-                  </div>
-                  <div className="sd-results-stat-label">Time Spent</div>
-                </div>
-
-                <div className="sd-results-stat-box">
-                  <div className="sd-results-stat-val green">Level 3</div>
-                  <div className="sd-results-stat-label">Clinical Judgment</div>
-                </div>
-              </div>
-
-              {/* Performance Breakdown Table */}
-              <div className="sd-results-breakdown-card">
-                <h3 className="sd-results-sec-heading">Performance by Question Item</h3>
-                <table className="sd-results-table">
-                  <thead>
-                    <tr>
-                      <th>Item</th>
-                      <th>Clinical Judgment Step</th>
-                      <th>Points</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td>Item 1</td>
-                      <td>Recognize Cues: Immediate Follow-up Clinical Findings</td>
-                      <td>{caseResults.item1Score} / 5 pts</td>
-                      <td>
-                        <span className={`sd-results-pill ${caseResults.item1Score >= 4 ? "correct" : "partial"}`}>
-                          {caseResults.item1Score === 5 ? "All Correct" : `${caseResults.item1Score} / 5 Correct`}
-                        </span>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>Item 2</td>
-                      <td>Analyze Cues: Hallmark Features of Intussusception</td>
-                      <td>{caseResults.item2Score} / 4 pts</td>
-                      <td>
-                        <span className={`sd-results-pill ${caseResults.item2Score >= 3 ? "correct" : "partial"}`}>
-                          {caseResults.item2Score === 4 ? "All Correct" : `${caseResults.item2Score} / 4 Correct`}
-                        </span>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>Item 3</td>
-                      <td>Prioritize Hypotheses: Pathophysiological Mechanism</td>
-                      <td>{caseResults.item3Score} / 1 pt</td>
-                      <td>
-                        <span className={`sd-results-pill ${caseResults.item3Score === 1 ? "correct" : "partial"}`}>
-                          {caseResults.item3Score === 1 ? "Correct" : "Incorrect"}
-                        </span>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>Item 4</td>
-                      <td>Generate Solutions: Anticipated Nursing Interventions</td>
-                      <td>{caseResults.item4Score} / 6 pts</td>
-                      <td>
-                        <span className={`sd-results-pill ${caseResults.item4Score >= 5 ? "correct" : "partial"}`}>
-                          {caseResults.item4Score === 6 ? "All Correct" : `${caseResults.item4Score} / 6 Correct`}
-                        </span>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>Item 5</td>
-                      <td>Take Action: Priority Provider Order (Fluid Resuscitation)</td>
-                      <td>{caseResults.item5Score} / 1 pt</td>
-                      <td>
-                        <span className={`sd-results-pill ${caseResults.item5Score === 1 ? "correct" : "partial"}`}>
-                          {caseResults.item5Score === 1 ? "Correct" : "Incorrect"}
-                        </span>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>Item 6</td>
-                      <td>Evaluate Outcomes: Post-Reduction Patient Response</td>
-                      <td>{caseResults.item6Score} / 5 pts</td>
-                      <td>
-                        <span className={`sd-results-pill ${caseResults.item6Score >= 4 ? "correct" : "partial"}`}>
-                          {caseResults.item6Score === 5 ? "All Correct" : `${caseResults.item6Score} / 5 Correct`}
-                        </span>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="sd-results-actions-row">
-                <button
-                  type="button"
-                  className="sd-results-btn-primary"
-                  onClick={() => {
-                    setIsResultsScreenActive(false);
-                    setTestQuestionIndex(0);
-                  }}
-                >
-                  Review Questions &amp; Rationales
-                </button>
-
-                <button
-                  type="button"
-                  className="sd-results-btn-secondary"
-                  onClick={() => {
-                    setCaseItem1SelectedTokens([]);
-                    setIsCaseItem1Submitted(false);
-                    setCaseItem2Matrix({});
-                    setIsCaseItem2Submitted(false);
-                    setCaseItem3Slot1(null);
-                    setCaseItem3Slot2(null);
-                    setIsCaseItem3Submitted(false);
-                    setCaseItem4Selections({});
-                    setIsCaseItem4Submitted(false);
-                    setCaseItem5Selected(null);
-                    setIsCaseItem5Submitted(false);
-                    setCaseItem6FollowUp([]);
-                    setIsCaseItem6Submitted(false);
-                    setTestTimerSeconds(0);
-                    setTestQuestionIndex(0);
-                    setIsResultsScreenActive(false);
-                  }}
-                >
-                  Retake Case Study
-                </button>
-
-                <button
-                  type="button"
-                  className="sd-results-btn-secondary"
-                  onClick={() => {
-                    setIsTestActive(false);
-                    setIsResultsScreenActive(false);
-                  }}
-                >
-                  Return to Dashboard
-                </button>
-              </div>
-            </div>
-          </div>
-        ) ) : activeTestExamType === "standalone" ? (
-          <div className="sd-test-body">
-            {/* Left Column: Clinical Context & Vignette */}
-            <section className="sd-test-ehr-pane" aria-label="Clinical Vignette">
-              <div className="sd-case-intro-banner">
-                Next Generation NCLEX® · Standalone Clinical Question
-              </div>
-
-              <div className="sd-case-item-meta">
-                <div className="sd-case-item-number">
-                  Question {testQuestionIndex + 1} of {standaloneQuestionsToUse.length}
-                </div>
-                <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", marginTop: "6px" }}>
-                  <span style={{ backgroundColor: "#dbeafe", color: "#1e40af", padding: "2px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: 700 }}>
-                    {currentStandaloneQuestion.subjectName}
-                  </span>
-                  <span style={{ color: "#64748b", fontSize: "11.5px" }}>{currentStandaloneQuestion.type}</span>
-                  <span style={{ color: "#94a3b8", fontSize: "11.5px" }}>•</span>
-                  <span style={{ color: "#64748b", fontSize: "11.5px" }}>By {currentStandaloneQuestion.author}</span>
-                </div>
-              </div>
-
-              <div className="sd-test-ehr-card" style={{ marginTop: "14px" }}>
-                <h4 className="sd-ehr-dept-title" style={{ color: "#007399", marginBottom: "10px", fontSize: "15px" }}>
-                  {currentStandaloneQuestion.title}
-                </h4>
-                <div style={{ fontSize: "13.5px", lineHeight: "1.75", color: "#1e293b", backgroundColor: "#f8fafc", padding: "16px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
-                  {currentStandaloneQuestion.stem}
-                </div>
-
-                <div style={{ marginTop: "16px", padding: "14px", backgroundColor: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "8px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "#166534", fontWeight: 700, fontSize: "12px", marginBottom: "4px" }}>
-                    <CheckCircle2 size={15} />
-                    <span>Clinical Judgment Measurement Framework</span>
-                  </div>
-                  <p style={{ margin: 0, fontSize: "12px", color: "#15803d", lineHeight: "1.5" }}>
-                    Synthesize client cues, recognize potential emergencies, and determine the priority nursing action or diagnosis.
-                  </p>
-                </div>
-              </div>
-            </section>
-
-            {/* Right Column: Question Choices, Submit, Detailed Rationale & AI */}
-            <main className="sd-test-question-pane" aria-label="Question & Choices">
-              <div className="sd-test-question-header">
-                <div className="sd-test-q-meta">
-                  <span className="sd-test-q-number">Question {testQuestionIndex + 1}</span>
-                  <span className="sd-test-q-type">{currentStandaloneQuestion.type}</span>
-                </div>
-                <h3 className="sd-test-q-prompt">
-                  Select the best response for the clinical scenario described:
-                </h3>
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "16px" }}>
-                {currentStandaloneQuestion.options.map((opt, optIdx) => {
-                  const isSelected = currentStandaloneAnswer.selectedOption === optIdx;
-                  const isCorrect = optIdx === currentStandaloneQuestion.correctIndex;
-                  let border = "1px solid #cbd5e1";
-                  let bg = "#ffffff";
-                  let color = "#1e293b";
-
-                  if (currentStandaloneAnswer.isSubmitted) {
-                    if (isCorrect) {
-                      border = "2px solid #10b981";
-                      bg = "#ecfdf5";
-                      color = "#065f46";
-                    } else if (isSelected && !isCorrect) {
-                      border = "2px solid #ef4444";
-                      bg = "#fef2f2";
-                      color = "#991b1b";
+                    if (currentStandaloneAnswer.isSubmitted) {
+                      if (isCorrect) {
+                        border = "2px solid #10b981";
+                        bg = "#ecfdf5";
+                        color = "#065f46";
+                      } else if (isSelected && !isCorrect) {
+                        border = "2px solid #ef4444";
+                        bg = "#fef2f2";
+                        color = "#991b1b";
+                      }
+                    } else if (isSelected) {
+                      border = "2px solid #007399";
+                      bg = "#f0f9ff";
+                      color = "#0369a1";
                     }
-                  } else if (isSelected) {
-                    border = "2px solid #007399";
-                    bg = "#f0f9ff";
-                    color = "#0369a1";
-                  }
 
-                  return (
-                    <div
-                      key={optIdx}
-                      onClick={() => {
-                        if (!currentStandaloneAnswer.isSubmitted) {
-                          setStandaloneAnswers((prev) => ({
-                            ...prev,
-                            [testQuestionIndex]: {
-                              selectedOption: optIdx,
-                              isSubmitted: false
-                            }
-                          }));
-                        }
-                      }}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "12px",
-                        padding: "14px 16px",
-                        borderRadius: "8px",
-                        border,
-                        backgroundColor: bg,
-                        cursor: currentStandaloneAnswer.isSubmitted ? "default" : "pointer",
-                        transition: "all 0.15s ease"
-                      }}
-                    >
-                      <input
-                        type="radio"
-                        name={`standalone-opt-${testQuestionIndex}`}
-                        checked={isSelected}
-                        onChange={() => {
+                    return (
+                      <div
+                        key={optIdx}
+                        onClick={() => {
                           if (!currentStandaloneAnswer.isSubmitted) {
                             setStandaloneAnswers((prev) => ({
                               ...prev,
@@ -3631,110 +4501,137 @@ const StudentDashboard = (): ReactElement => {
                             }));
                           }
                         }}
-                        disabled={currentStandaloneAnswer.isSubmitted}
-                        style={{ width: "16px", height: "16px", cursor: "pointer" }}
-                      />
-                      <span
                         style={{
-                          width: "24px",
-                          height: "24px",
-                          borderRadius: "50%",
-                          backgroundColor: isSelected ? "#007399" : "#f1f5f9",
-                          color: isSelected ? "#ffffff" : "#475569",
                           display: "flex",
                           alignItems: "center",
-                          justifyContent: "center",
-                          fontWeight: 700,
-                          fontSize: "12px",
-                          flexShrink: 0
+                          gap: "12px",
+                          padding: "14px 16px",
+                          borderRadius: "8px",
+                          border,
+                          backgroundColor: bg,
+                          cursor: currentStandaloneAnswer.isSubmitted ? "default" : "pointer",
+                          transition: "all 0.15s ease"
                         }}
                       >
-                        {String.fromCharCode(65 + optIdx)}
-                      </span>
-                      <span style={{ fontSize: "14px", color, fontWeight: isSelected || (currentStandaloneAnswer.isSubmitted && isCorrect) ? 600 : 400, flex: 1, lineHeight: "1.45" }}>
-                        {opt}
-                      </span>
-                      {currentStandaloneAnswer.isSubmitted && isCorrect && (
-                        <span style={{ fontSize: "12px", fontWeight: 700, color: "#10b981", display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                          <CheckCircle2 size={16} /> Correct
+                        <input
+                          type="radio"
+                          name={`standalone-opt-${testQuestionIndex}`}
+                          checked={isSelected}
+                          onChange={() => {
+                            if (!currentStandaloneAnswer.isSubmitted) {
+                              setStandaloneAnswers((prev) => ({
+                                ...prev,
+                                [testQuestionIndex]: {
+                                  selectedOption: optIdx,
+                                  isSubmitted: false
+                                }
+                              }));
+                            }
+                          }}
+                          disabled={currentStandaloneAnswer.isSubmitted}
+                          style={{ width: "16px", height: "16px", cursor: "pointer" }}
+                        />
+                        <span
+                          style={{
+                            width: "24px",
+                            height: "24px",
+                            borderRadius: "50%",
+                            backgroundColor: isSelected ? "#007399" : "#f1f5f9",
+                            color: isSelected ? "#ffffff" : "#475569",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontWeight: 700,
+                            fontSize: "12px",
+                            flexShrink: 0
+                          }}
+                        >
+                          {String.fromCharCode(65 + optIdx)}
                         </span>
-                      )}
-                      {currentStandaloneAnswer.isSubmitted && isSelected && !isCorrect && (
-                        <span style={{ fontSize: "12px", fontWeight: 700, color: "#ef4444", display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                          <AlertCircle size={16} /> Incorrect
+                        <span style={{ fontSize: "14px", color, fontWeight: isSelected || (currentStandaloneAnswer.isSubmitted && isCorrect) ? 600 : 400, flex: 1, lineHeight: "1.45" }}>
+                          {opt}
                         </span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Inline Submit Button */}
-              {!currentStandaloneAnswer.isSubmitted && (
-                <div style={{ marginTop: "20px", marginBottom: "16px" }}>
-                  <button
-                    type="button"
-                    className="sd-test-submit-btn"
-                    disabled={currentStandaloneAnswer.selectedOption === null}
-                    onClick={() => void submitStandaloneAnswer()}
-                  >
-                    Submit Answer
-                  </button>
+                        {currentStandaloneAnswer.isSubmitted && isCorrect && (
+                          <span style={{ fontSize: "12px", fontWeight: 700, color: "#10b981", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                            <CheckCircle2 size={16} /> Correct
+                          </span>
+                        )}
+                        {currentStandaloneAnswer.isSubmitted && isSelected && !isCorrect && (
+                          <span style={{ fontSize: "12px", fontWeight: 700, color: "#ef4444", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                            <AlertCircle size={16} /> Incorrect
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-              )}
 
-              {/* Post-submission Detailed Clinical Rationale & Feedback */}
-              {currentStandaloneAnswer.isSubmitted && (
-                <div className="sd-expl-box">
-                  <div className="sd-expl-metrics-grid">
-                    <div className="sd-expl-metric-item">
-                      <span className="sd-expl-metric-label">Credit</span>
-                      <span className="sd-expl-metric-value highlight">
-                        {currentStandaloneAnswer.selectedOption === currentStandaloneQuestion.correctIndex ? "1 / 1" : "0 / 1"}
-                      </span>
+                {/* Inline Submit Button */}
+                {!currentStandaloneAnswer.isSubmitted && (
+                  <div style={{ marginTop: "20px", marginBottom: "16px" }}>
+                    <button
+                      type="button"
+                      className="sd-test-submit-btn"
+                      disabled={currentStandaloneAnswer.selectedOption === null}
+                      onClick={() => void submitStandaloneAnswer()}
+                    >
+                      Submit Answer
+                    </button>
+                  </div>
+                )}
+
+                {/* Post-submission Detailed Clinical Rationale & Feedback */}
+                {currentStandaloneAnswer.isSubmitted && (
+                  <div className="sd-expl-box">
+                    <div className="sd-expl-metrics-grid">
+                      <div className="sd-expl-metric-item">
+                        <span className="sd-expl-metric-label">Credit</span>
+                        <span className="sd-expl-metric-value highlight">
+                          {currentStandaloneAnswer.selectedOption === currentStandaloneQuestion.correctIndex ? "1 / 1" : "0 / 1"}
+                        </span>
+                      </div>
+                      <div className="sd-expl-metric-item">
+                        <span className="sd-expl-metric-label">Scoring Rule</span>
+                        <span className="sd-expl-metric-value">0/1 Standard</span>
+                      </div>
+                      <div className="sd-expl-metric-item">
+                        <span className="sd-expl-metric-label">Status</span>
+                        <span className="sd-expl-metric-value" style={{ color: currentStandaloneAnswer.selectedOption === currentStandaloneQuestion.correctIndex ? "#10b981" : "#ef4444" }}>
+                          {currentStandaloneAnswer.selectedOption === currentStandaloneQuestion.correctIndex ? "Correct Answer" : "Incorrect Answer"}
+                        </span>
+                      </div>
+                      <div className="sd-expl-metric-item">
+                        <span className="sd-expl-metric-label">Time Spent</span>
+                        <span className="sd-expl-metric-value">
+                          {formatTestTimer(testTimerSeconds)}
+                        </span>
+                      </div>
                     </div>
-                    <div className="sd-expl-metric-item">
-                      <span className="sd-expl-metric-label">Scoring Rule</span>
-                      <span className="sd-expl-metric-value">0/1 Standard</span>
+
+                    <div>
+                      <div className="sd-expl-title-row">
+                        <FileText size={16} color="#007399" />
+                        <span>Clinical Explanation &amp; Rationale</span>
+                      </div>
                     </div>
-                    <div className="sd-expl-metric-item">
-                      <span className="sd-expl-metric-label">Status</span>
-                      <span className="sd-expl-metric-value" style={{ color: currentStandaloneAnswer.selectedOption === currentStandaloneQuestion.correctIndex ? "#10b981" : "#ef4444" }}>
-                        {currentStandaloneAnswer.selectedOption === currentStandaloneQuestion.correctIndex ? "Correct Answer" : "Incorrect Answer"}
-                      </span>
-                    </div>
-                    <div className="sd-expl-metric-item">
-                      <span className="sd-expl-metric-label">Time Spent</span>
-                      <span className="sd-expl-metric-value">
-                        {formatTestTimer(testTimerSeconds)}
-                      </span>
+
+                    <div className="sd-expl-content">
+                      <p style={{ fontSize: "14px", lineHeight: "1.7", color: "#1e293b" }}>
+                        {currentStandaloneQuestion.rationale}
+                      </p>
+
+                      <div className="sd-expl-key-takeaway" style={{ marginTop: "14px" }}>
+                        <strong>Key Takeaway:</strong> {currentStandaloneQuestion.title} — Correct Answer: Option {String.fromCharCode(65 + currentStandaloneQuestion.correctIndex)}.
+                      </div>
+
+                      {/* Interactive Ask nclex.com AI */}
+                      {renderAiChatCard(currentStandaloneQuestion.title)}
                     </div>
                   </div>
-
-                  <div>
-                    <div className="sd-expl-title-row">
-                      <FileText size={16} color="#007399" />
-                      <span>Clinical Explanation &amp; Rationale</span>
-                    </div>
-                  </div>
-
-                  <div className="sd-expl-content">
-                    <p style={{ fontSize: "14px", lineHeight: "1.7", color: "#1e293b" }}>
-                      {currentStandaloneQuestion.rationale}
-                    </p>
-
-                    <div className="sd-expl-key-takeaway" style={{ marginTop: "14px" }}>
-                      <strong>Key Takeaway:</strong> {currentStandaloneQuestion.title} — Correct Answer: Option {String.fromCharCode(65 + currentStandaloneQuestion.correctIndex)}.
-                    </div>
-
-                    {/* Interactive Ask nclex.com AI */}
-                    {renderAiChatCard(currentStandaloneQuestion.title)}
-                  </div>
-                </div>
-              )}
-            </main>
-          </div>
-        ) : (
+                )}
+              </main>
+            </div>
+          ) : (
           /* =====================================================================
               VIEW 2: ACTIVE 6-ITEM CASE STUDY (Matches media_1795082670408_4d175c34.jpg to media_1795082793266_06b56935.jpg)
               ===================================================================== */
@@ -3938,15 +4835,13 @@ const StudentDashboard = (): ReactElement => {
                       <span className="sd-ehr-timestamp">1330:</span> Client was brought to the emergency department by his mother. The mother states the client is a 6-month-old male and that they identify as &ldquo;Hispanic or Latino.&rdquo; The child has had liquid diarrhea for the past day, and his last diaper change contained a small amount of{" "}
                       {/* Token 1: blood and mucus (Correct) */}
                       <span
-                        className={`sd-highlight-token ${
-                          caseItem1SelectedTokens.includes(1) ? "selected" : ""
-                        } ${
-                          isCaseItem1Submitted
+                        className={`sd-highlight-token ${caseItem1SelectedTokens.includes(1) ? "selected" : ""
+                          } ${isCaseItem1Submitted
                             ? caseItem1SelectedTokens.includes(1)
                               ? "correct"
                               : "missed"
                             : ""
-                        } ${isCaseItem1Submitted ? "locked" : ""}`}
+                          } ${isCaseItem1Submitted ? "locked" : ""}`}
                         onClick={() => {
                           if (isCaseItem1Submitted) return;
                           setCaseItem1SelectedTokens((prev) =>
@@ -3960,15 +4855,13 @@ const StudentDashboard = (): ReactElement => {
                       . The mother reports that several times over the past hour, while the child was playing with his toys he would{" "}
                       {/* Token 2: "stop, curl up, and cry, then return to playing." (Correct) */}
                       <span
-                        className={`sd-highlight-token ${
-                          caseItem1SelectedTokens.includes(2) ? "selected" : ""
-                        } ${
-                          isCaseItem1Submitted
+                        className={`sd-highlight-token ${caseItem1SelectedTokens.includes(2) ? "selected" : ""
+                          } ${isCaseItem1Submitted
                             ? caseItem1SelectedTokens.includes(2)
                               ? "correct"
                               : "missed"
                             : ""
-                        } ${isCaseItem1Submitted ? "locked" : ""}`}
+                          } ${isCaseItem1Submitted ? "locked" : ""}`}
                         onClick={() => {
                           if (isCaseItem1Submitted) return;
                           setCaseItem1SelectedTokens((prev) =>
@@ -3982,15 +4875,13 @@ const StudentDashboard = (): ReactElement => {
                       Mom states the client also had{" "}
                       {/* Token 3: "green, mucousy vomit" (Correct) */}
                       <span
-                        className={`sd-highlight-token ${
-                          caseItem1SelectedTokens.includes(3) ? "selected" : ""
-                        } ${
-                          isCaseItem1Submitted
+                        className={`sd-highlight-token ${caseItem1SelectedTokens.includes(3) ? "selected" : ""
+                          } ${isCaseItem1Submitted
                             ? caseItem1SelectedTokens.includes(3)
                               ? "correct"
                               : "missed"
                             : ""
-                        } ${isCaseItem1Submitted ? "locked" : ""}`}
+                          } ${isCaseItem1Submitted ? "locked" : ""}`}
                         onClick={() => {
                           if (isCaseItem1Submitted) return;
                           setCaseItem1SelectedTokens((prev) =>
@@ -4004,15 +4895,13 @@ const StudentDashboard = (): ReactElement => {
                       on the way to the hospital. His mother notes that she{" "}
                       {/* Token 4: changed formula 3 weeks ago (Distractor) */}
                       <span
-                        className={`sd-highlight-token ${
-                          caseItem1SelectedTokens.includes(4) ? "selected" : ""
-                        } ${
-                          isCaseItem1Submitted
+                        className={`sd-highlight-token ${caseItem1SelectedTokens.includes(4) ? "selected" : ""
+                          } ${isCaseItem1Submitted
                             ? caseItem1SelectedTokens.includes(4)
                               ? "incorrect"
                               : ""
                             : ""
-                        } ${isCaseItem1Submitted ? "locked" : ""}`}
+                          } ${isCaseItem1Submitted ? "locked" : ""}`}
                         onClick={() => {
                           if (isCaseItem1Submitted) return;
                           setCaseItem1SelectedTokens((prev) =>
@@ -4028,15 +4917,13 @@ const StudentDashboard = (): ReactElement => {
                       . The client has refused feeds since yesterday. The mother reports the client has a history of hip dysplasia and a ventricular septal defect diagnosed at 1 month of age, but she states the septal defect has since resolved on its own. Upon physical examination, the posterior fontanelle is firm, flat, and closed, and the anterior fontanelle is soft, flat, and open. S1 and S2 heart sounds auscultated; no murmurs detected. Abdominal auscultation reveals hyperactive bowel sounds. A{" "}
                       {/* Token 5: 4 cm elongated mass palpated in right upper quadrant (RUQ) (Correct) */}
                       <span
-                        className={`sd-highlight-token ${
-                          caseItem1SelectedTokens.includes(5) ? "selected" : ""
-                        } ${
-                          isCaseItem1Submitted
+                        className={`sd-highlight-token ${caseItem1SelectedTokens.includes(5) ? "selected" : ""
+                          } ${isCaseItem1Submitted
                             ? caseItem1SelectedTokens.includes(5)
                               ? "correct"
                               : "missed"
                             : ""
-                        } ${isCaseItem1Submitted ? "locked" : ""}`}
+                          } ${isCaseItem1Submitted ? "locked" : ""}`}
                         onClick={() => {
                           if (isCaseItem1Submitted) return;
                           setCaseItem1SelectedTokens((prev) =>
@@ -4050,15 +4937,13 @@ const StudentDashboard = (): ReactElement => {
                       . The child{" "}
                       {/* Token 6: screamed and guarded his abdomen throughout the abdominal examination (Correct) */}
                       <span
-                        className={`sd-highlight-token ${
-                          caseItem1SelectedTokens.includes(6) ? "selected" : ""
-                        } ${
-                          isCaseItem1Submitted
+                        className={`sd-highlight-token ${caseItem1SelectedTokens.includes(6) ? "selected" : ""
+                          } ${isCaseItem1Submitted
                             ? caseItem1SelectedTokens.includes(6)
                               ? "correct"
                               : "missed"
                             : ""
-                        } ${isCaseItem1Submitted ? "locked" : ""}`}
+                          } ${isCaseItem1Submitted ? "locked" : ""}`}
                         onClick={() => {
                           if (isCaseItem1Submitted) return;
                           setCaseItem1SelectedTokens((prev) =>
@@ -4072,15 +4957,13 @@ const StudentDashboard = (): ReactElement => {
                       . The skin assessment reveals{" "}
                       {/* Token 7: dry, erythematous patches behind the knees (Distractor) */}
                       <span
-                        className={`sd-highlight-token ${
-                          caseItem1SelectedTokens.includes(7) ? "selected" : ""
-                        } ${
-                          isCaseItem1Submitted
+                        className={`sd-highlight-token ${caseItem1SelectedTokens.includes(7) ? "selected" : ""
+                          } ${isCaseItem1Submitted
                             ? caseItem1SelectedTokens.includes(7)
                               ? "incorrect"
                               : ""
                             : ""
-                        } ${isCaseItem1Submitted ? "locked" : ""}`}
+                          } ${isCaseItem1Submitted ? "locked" : ""}`}
                         onClick={() => {
                           if (isCaseItem1Submitted) return;
                           setCaseItem1SelectedTokens((prev) =>
@@ -4096,15 +4979,13 @@ const StudentDashboard = (): ReactElement => {
                       and an{" "}
                       {/* Token 8: irregularly shaped blue mark on the sacrum (Distractor) */}
                       <span
-                        className={`sd-highlight-token ${
-                          caseItem1SelectedTokens.includes(8) ? "selected" : ""
-                        } ${
-                          isCaseItem1Submitted
+                        className={`sd-highlight-token ${caseItem1SelectedTokens.includes(8) ? "selected" : ""
+                          } ${isCaseItem1Submitted
                             ? caseItem1SelectedTokens.includes(8)
                               ? "incorrect"
                               : ""
                             : ""
-                        } ${isCaseItem1Submitted ? "locked" : ""}`}
+                          } ${isCaseItem1Submitted ? "locked" : ""}`}
                         onClick={() => {
                           if (isCaseItem1Submitted) return;
                           setCaseItem1SelectedTokens((prev) =>
@@ -4391,13 +5272,12 @@ const StudentDashboard = (): ReactElement => {
                       style={{
                         padding: "5px 12px",
                         borderRadius: "4px",
-                        border: `1px solid ${
-                          isCaseItem3Submitted
-                            ? caseItem3Slot1 === "bowel perforation"
-                              ? "#10b981"
-                              : "#ef4444"
-                            : "#94a3b8"
-                        }`,
+                        border: `1px solid ${isCaseItem3Submitted
+                          ? caseItem3Slot1 === "bowel perforation"
+                            ? "#10b981"
+                            : "#ef4444"
+                          : "#94a3b8"
+                          }`,
                         background: isCaseItem3Submitted
                           ? caseItem3Slot1 === "bowel perforation"
                             ? "#ecfdf5"
@@ -4426,13 +5306,12 @@ const StudentDashboard = (): ReactElement => {
                       style={{
                         padding: "5px 12px",
                         borderRadius: "4px",
-                        border: `1px solid ${
-                          isCaseItem3Submitted
-                            ? caseItem3Slot2 === "ischemia"
-                              ? "#10b981"
-                              : "#ef4444"
-                            : "#94a3b8"
-                        }`,
+                        border: `1px solid ${isCaseItem3Submitted
+                          ? caseItem3Slot2 === "ischemia"
+                            ? "#10b981"
+                            : "#ef4444"
+                          : "#94a3b8"
+                          }`,
                         background: isCaseItem3Submitted
                           ? caseItem3Slot2 === "ischemia"
                             ? "#ecfdf5"
@@ -4624,27 +5503,26 @@ const StudentDashboard = (): ReactElement => {
                           gap: "12px",
                           padding: "13px 18px",
                           borderRadius: "6px",
-                          border: `1.5px solid ${
-                            isCaseItem5Submitted
-                              ? opt.correct
-                                ? "#10b981"
-                                : caseItem5Selected === opt.id
+                          border: `1.5px solid ${isCaseItem5Submitted
+                            ? opt.correct
+                              ? "#10b981"
+                              : caseItem5Selected === opt.id
                                 ? "#ef4444"
                                 : "#cbd5e1"
-                              : caseItem5Selected === opt.id
+                            : caseItem5Selected === opt.id
                               ? "#0284c7"
                               : "#cbd5e1"
-                          }`,
+                            }`,
                           background:
                             isCaseItem5Submitted
                               ? opt.correct
                                 ? "#ecfdf5"
                                 : caseItem5Selected === opt.id
-                                ? "#fef2f2"
-                                : "#ffffff"
+                                  ? "#fef2f2"
+                                  : "#ffffff"
                               : caseItem5Selected === opt.id
-                              ? "#f0f9ff"
-                              : "#ffffff",
+                                ? "#f0f9ff"
+                                : "#ffffff",
                           cursor: "pointer",
                           fontSize: "13.5px",
                           transition: "all 0.15s ease"
@@ -4760,9 +5638,8 @@ const StudentDashboard = (): ReactElement => {
                                 return (
                                   <div
                                     key={finding}
-                                    className={`sd-drag-item ${
-                                      isCaseItem6Submitted ? (isCorrect ? "correct" : "incorrect") : ""
-                                    }`}
+                                    className={`sd-drag-item ${isCaseItem6Submitted ? (isCorrect ? "correct" : "incorrect") : ""
+                                      }`}
                                     onClick={() => {
                                       if (isCaseItem6Submitted) return;
                                       setCaseItem6FollowUp((prev) => prev.filter((f) => f !== finding));
@@ -4948,6 +5825,105 @@ const StudentDashboard = (): ReactElement => {
             </button>
           </div>
 
+          {/* Question Tagging & Bookmarking Toolbar */}
+          <div className="sd-test-footer-center" style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <button
+              type="button"
+              className={`sd-test-tag-pill ${markedQuestions[testQuestionIndex] ? "active bookmark" : ""}`}
+              onClick={() => void toggleBookmark()}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
+                padding: "4px 10px",
+                borderRadius: "6px",
+                fontSize: "12px",
+                fontWeight: 600,
+                border: "1px solid rgba(255, 255, 255, 0.3)",
+                background: markedQuestions[testQuestionIndex] ? "#f59e0b" : "rgba(255, 255, 255, 0.12)",
+                color: "#ffffff",
+                cursor: "pointer",
+                transition: "all 0.15s ease"
+              }}
+              title="Bookmark this question"
+            >
+              <span>⭐</span>
+              <span>{markedQuestions[testQuestionIndex] ? "Bookmarked" : "Bookmark"}</span>
+            </button>
+
+            <button
+              type="button"
+              className={`sd-test-tag-pill ${questionTags[testQuestionIndex] === "learning" ? "active learning" : ""}`}
+              onClick={() => void toggleQuestionTag("learning")}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
+                padding: "4px 10px",
+                borderRadius: "6px",
+                fontSize: "12px",
+                fontWeight: 600,
+                border: "1px solid rgba(255, 255, 255, 0.3)",
+                background: questionTags[testQuestionIndex] === "learning" ? "#3b82f6" : "rgba(255, 255, 255, 0.12)",
+                color: "#ffffff",
+                cursor: "pointer",
+                transition: "all 0.15s ease"
+              }}
+              title="Tag as Learning"
+            >
+              <span>📘</span>
+              <span>Learning</span>
+            </button>
+
+            <button
+              type="button"
+              className={`sd-test-tag-pill ${questionTags[testQuestionIndex] === "reviewing" ? "active reviewing" : ""}`}
+              onClick={() => void toggleQuestionTag("reviewing")}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
+                padding: "4px 10px",
+                borderRadius: "6px",
+                fontSize: "12px",
+                fontWeight: 600,
+                border: "1px solid rgba(255, 255, 255, 0.3)",
+                background: questionTags[testQuestionIndex] === "reviewing" ? "#8b5cf6" : "rgba(255, 255, 255, 0.12)",
+                color: "#ffffff",
+                cursor: "pointer",
+                transition: "all 0.15s ease"
+              }}
+              title="Tag as Reviewing"
+            >
+              <span>🔄</span>
+              <span>Reviewing</span>
+            </button>
+
+            <button
+              type="button"
+              className={`sd-test-tag-pill ${questionTags[testQuestionIndex] === "mastered" ? "active mastered" : ""}`}
+              onClick={() => void toggleQuestionTag("mastered")}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
+                padding: "4px 10px",
+                borderRadius: "6px",
+                fontSize: "12px",
+                fontWeight: 600,
+                border: "1px solid rgba(255, 255, 255, 0.3)",
+                background: questionTags[testQuestionIndex] === "mastered" ? "#10b981" : "rgba(255, 255, 255, 0.12)",
+                color: "#ffffff",
+                cursor: "pointer",
+                transition: "all 0.15s ease"
+              }}
+              title="Tag as Mastered"
+            >
+              <span>✅</span>
+              <span>Mastered</span>
+            </button>
+          </div>
+
           <div className="sd-test-footer-right" style={{ position: "relative" }}>
             <button
               type="button"
@@ -4982,63 +5958,61 @@ const StudentDashboard = (): ReactElement => {
             {isNavigateOpen && (
               <div className="sd-case-nav-popover">
                 <div className="sd-case-nav-popover-title">
-                  {activeTestExamType === "standalone"
+                  {activeTestExamType === "standalone" || activeTestExamType === "cat"
                     ? `Questions (1 - ${standaloneQuestionsToUse.length})`
                     : "Questions (1 - 6)"}
                 </div>
                 <div className="sd-case-nav-grid">
-                  {activeTestExamType === "standalone"
+                  {activeTestExamType === "standalone" || activeTestExamType === "cat"
                     ? standaloneQuestionsToUse.map((_, idx) => {
-                        const isAnswered = standaloneAnswers[idx]?.isSubmitted;
-                        return (
-                          <button
-                            key={idx}
-                            type="button"
-                            className={`sd-case-nav-item-btn ${testQuestionIndex === idx && !isResultsScreenActive ? "active" : ""} ${
-                              isAnswered ? "answered" : ""
+                      const isAnswered = standaloneAnswers[idx]?.isSubmitted;
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          className={`sd-case-nav-item-btn ${testQuestionIndex === idx && !isResultsScreenActive ? "active" : ""} ${isAnswered ? "answered" : ""
                             }`}
-                            onClick={() => {
-                              setTestQuestionIndex(idx);
-                              setIsResultsScreenActive(false);
-                              setIsNavigateOpen(false);
-                            }}
-                          >
-                            Q{idx + 1}
-                          </button>
-                        );
-                      })
+                          onClick={() => {
+                            setTestQuestionIndex(idx);
+                            setIsResultsScreenActive(false);
+                            setIsNavigateOpen(false);
+                          }}
+                        >
+                          Q{idx + 1}
+                        </button>
+                      );
+                    })
                     : [0, 1, 2, 3, 4, 5].map((idx) => {
-                        const isAnswered =
-                          (idx === 0 && isCaseItem1Submitted) ||
-                          (idx === 1 && isCaseItem2Submitted) ||
-                          (idx === 2 && isCaseItem3Submitted) ||
-                          (idx === 3 && isCaseItem4Submitted) ||
-                          (idx === 4 && isCaseItem5Submitted) ||
-                          (idx === 5 && isCaseItem6Submitted);
+                      const isAnswered =
+                        (idx === 0 && isCaseItem1Submitted) ||
+                        (idx === 1 && isCaseItem2Submitted) ||
+                        (idx === 2 && isCaseItem3Submitted) ||
+                        (idx === 3 && isCaseItem4Submitted) ||
+                        (idx === 4 && isCaseItem5Submitted) ||
+                        (idx === 5 && isCaseItem6Submitted);
 
-                        return (
-                          <button
-                            key={idx}
-                            type="button"
-                            className={`sd-case-nav-item-btn ${testQuestionIndex === idx && !isResultsScreenActive ? "active" : ""} ${
-                              isAnswered ? "answered" : ""
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          className={`sd-case-nav-item-btn ${testQuestionIndex === idx && !isResultsScreenActive ? "active" : ""} ${isAnswered ? "answered" : ""
                             }`}
-                            onClick={() => {
-                              setTestQuestionIndex(idx);
-                              setIsResultsScreenActive(false);
-                              setIsNavigateOpen(false);
-                            }}
-                          >
-                            Item {idx + 1}
-                          </button>
-                        );
-                      })}
+                          onClick={() => {
+                            setTestQuestionIndex(idx);
+                            setIsResultsScreenActive(false);
+                            setIsNavigateOpen(false);
+                          }}
+                        >
+                          Item {idx + 1}
+                        </button>
+                      );
+                    })}
                 </div>
               </div>
             )}
 
             {/* Submit or Next Button in Bottom Bar */}
-            {activeTestExamType === "standalone" ? (
+            {(activeTestExamType === "standalone" || activeTestExamType === "cat") ? (
               !currentStandaloneAnswer.isSubmitted ? (
                 <button
                   type="button"
@@ -5049,11 +6023,33 @@ const StudentDashboard = (): ReactElement => {
                 >
                   <span>Submit ➔</span>
                 </button>
-              ) : testQuestionIndex === standaloneQuestionsToUse.length - 1 ? (
+              ) : (activeTestExamType === "cat" && catExamSummary) || (activeTestExamType === "standalone" && testQuestionIndex === standaloneQuestionsToUse.length - 1) ? (
                 <button
                   type="button"
                   className="sd-test-nav-btn"
-                  onClick={() => setIsResultsScreenActive(true)}
+                  onClick={() => {
+                    if (activeTestExamType === "standalone") {
+                      const totalQ = standaloneQuestionsToUse.length;
+                      const correctQ = standaloneQuestionsToUse.reduce((acc, q, idx) => {
+                        const ans = standaloneAnswers[idx];
+                        return acc + (ans?.isSubmitted && ans.selectedOption === q.correctIndex ? 1 : 0);
+                      }, 0);
+                      const pct = totalQ > 0 ? Math.round((correctQ / totalQ) * 100) : 0;
+                      saveCustomTestAttempt({
+                        id: `test-custom-${Date.now()}`,
+                        name: `Custom Practice Test (${totalQ} Questions)`,
+                        type: "custom",
+                        pool: "Practice Qbank",
+                        date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+                        scorePercent: pct,
+                        avgScorePercent: 68,
+                        totalQuestions: totalQ,
+                        answeredCount: totalQ,
+                        passStatus: pct >= 65 ? "PASS" : "FAIL"
+                      });
+                    }
+                    setIsResultsScreenActive(true);
+                  }}
                   title="Finish exam and view comprehensive results"
                 >
                   <span>View Results ▶</span>
@@ -5072,11 +6068,11 @@ const StudentDashboard = (): ReactElement => {
                 </button>
               )
             ) : !((testQuestionIndex === 0 && isCaseItem1Submitted) ||
-               (testQuestionIndex === 1 && isCaseItem2Submitted) ||
-               (testQuestionIndex === 2 && isCaseItem3Submitted) ||
-               (testQuestionIndex === 3 && isCaseItem4Submitted) ||
-               (testQuestionIndex === 4 && isCaseItem5Submitted) ||
-               (testQuestionIndex === 5 && isCaseItem6Submitted)) ? (
+              (testQuestionIndex === 1 && isCaseItem2Submitted) ||
+              (testQuestionIndex === 2 && isCaseItem3Submitted) ||
+              (testQuestionIndex === 3 && isCaseItem4Submitted) ||
+              (testQuestionIndex === 4 && isCaseItem5Submitted) ||
+              (testQuestionIndex === 5 && isCaseItem6Submitted)) ? (
               <button
                 type="button"
                 className="sd-test-nav-btn"
@@ -5334,17 +6330,106 @@ const StudentDashboard = (): ReactElement => {
           </button>
         </nav>
 
-        <div className="sd-sidebar-footer">
-          <div className="sd-user-badge">
-            <div className="sd-user-avatar">R</div>
-            <div className="sd-user-info">
-              <strong>Rose Student</strong>
-              <small>NCLEX-RN® Prep</small>
+        <div className="sd-sidebar-footer" style={{ position: "relative" }}>
+          <div
+            className="sd-user-badge"
+            onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+            style={{ cursor: "pointer" }}
+          >
+            <div className="sd-user-avatar">
+              {((currentUser?.username || currentUser?.email || "R")[0] ?? "R").toUpperCase()}
             </div>
-            <button type="button" className="sd-settings-btn" aria-label="Settings">
+            <div className="sd-user-info">
+              <strong>{currentUser?.username || "Rose Student"}</strong>
+              <small>{currentUser?.email || "NCLEX-RN® Prep"}</small>
+            </div>
+            <button
+              type="button"
+              className="sd-settings-btn"
+              aria-label="Settings"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsUserMenuOpen(!isUserMenuOpen);
+              }}
+            >
               <Settings2 size={16} />
             </button>
           </div>
+
+          {isUserMenuOpen && (
+            <div
+              style={{
+                position: "absolute",
+                bottom: "78px",
+                left: "12px",
+                right: "12px",
+                backgroundColor: "#ffffff",
+                borderRadius: "10px",
+                boxShadow: "0 12px 30px rgba(0,0,0,0.25)",
+                border: "1px solid #e2e8f0",
+                padding: "10px",
+                zIndex: 999
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ padding: "8px", borderBottom: "1px solid #f1f5f9", marginBottom: "6px" }}>
+                <p style={{ margin: 0, fontSize: "13px", fontWeight: 700, color: "#1e293b" }}>
+                  {currentUser?.username || "Guest Student"}
+                </p>
+                <p style={{ margin: 0, fontSize: "11.5px", color: "#64748b", wordBreak: "break-all" }}>
+                  {currentUser?.email || "Not logged in"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsUserMenuOpen(false);
+                  setActiveTab("account");
+                }}
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  background: "transparent",
+                  border: "none",
+                  padding: "8px",
+                  borderRadius: "6px",
+                  color: "#334155",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  marginBottom: "4px"
+                }}
+              >
+                <Settings size={14} />
+                <span>Account &amp; Profile</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  logoutUser();
+                  window.location.href = "/auth?mode=login";
+                }}
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  background: "transparent",
+                  border: "none",
+                  padding: "8px",
+                  borderRadius: "6px",
+                  color: "#ef4444",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  cursor: "pointer"
+                }}
+              >
+                Log Out
+              </button>
+            </div>
+          )}
+
           <Link href="/" className="sd-back-home">
             <ArrowLeft size={14} /> Back to website
           </Link>
@@ -5422,14 +6507,27 @@ const StudentDashboard = (): ReactElement => {
                 <span>Upgrade</span>
               </button>
             )}
-            <div className="sd-profile-circle" title="User profile">
-              R
+            <div
+              className="sd-profile-circle"
+              title="User profile & account"
+              onClick={() => setActiveTab("account")}
+              style={{ cursor: "pointer" }}
+            >
+              {((currentUser?.username || currentUser?.email || "R")[0] ?? "R").toUpperCase()}
             </div>
           </div>
         </header>
 
         {/* Main Scrollable Content */}
-        {activeTab === "performance" ? (
+        {activeTab === "account" ? (
+          <StudentAccountView
+            onBackToHome={() => setActiveTab("home")}
+            onLogout={() => {
+              logoutUser();
+              window.location.href = "/auth?mode=login";
+            }}
+          />
+        ) : activeTab === "performance" ? (
           /* ================================================================
              PERFORMANCE VIEW (Matches exact reference design)
              ================================================================ */
@@ -5473,145 +6571,181 @@ const StudentDashboard = (): ReactElement => {
                 Pass Targets
               </h2>
 
-              {/* Student Advice / Success Banner */}
-              <div className="sd-perf-advice-banner">
-                <div className="sd-advice-avatar">
-                  <img
-                    src="/images/landing-hero-nurse.jpg"
-                    alt="NCLEX Expert"
-                    className="sd-advice-avatar-img"
-                  />
-                </div>
-                <div className="sd-advice-text">
-                  <span>
-                    <strong>99% of NCLEXLab students who meet all targets pass the NCLEX.</strong> You&apos;ve met 0 of 3 targets... Just getting started!
-                  </span>
-                </div>
-              </div>
+              {(() => {
+                let totalAnswered = 0;
+                let totalCorrect = 0;
+                for (const t of savedPreviousTests) {
+                  totalAnswered += t.answeredCount;
+                  totalCorrect += Math.round((t.scorePercent / 100) * t.answeredCount);
+                }
+                for (const c of savedCatSummaries) {
+                  totalAnswered += c.totalQuestions;
+                  totalCorrect += Math.round((c.accuracyPercent / 100) * c.totalQuestions);
+                }
+                const scorePercent = totalAnswered > 0 ? Math.round((totalCorrect / totalAnswered) * 100) : 0;
+                const totalQBank = 1580;
+                const usagePercent = Math.min(100, Math.round((totalAnswered / totalQBank) * 100));
+                const cat1 = savedCatSummaries.find((s) => s.examNumber === 1);
+                const cat2 = savedCatSummaries.find((s) => s.examNumber === 2);
+                const cat3 = savedCatSummaries.find((s) => s.examNumber === 3);
+                const cat4 = savedCatSummaries.find((s) => s.examNumber === 4);
+                const hasPassedCat = savedCatSummaries.some((s) => s.passStatus === "PASS");
+                const targetsMet = (scorePercent >= 62 ? 1 : 0) + (usagePercent >= 85 ? 1 : 0) + (hasPassedCat ? 1 : 0);
+                const scoreDashoffset = 220 - (220 * scorePercent / 100);
+                const usageDashoffset = 220 - (220 * usagePercent / 100);
 
-              {/* 3 Metric Cards Grid */}
-              <div className="sd-perf-cards-grid">
-                {/* Card 1: Your Score */}
-                <div className="sd-perf-metric-card">
-                  <h3 className="sd-perf-card-title">Your Score</h3>
-                  <div className="sd-perf-gauge-area">
-                    <svg className="sd-perf-gauge-svg" viewBox="0 0 180 100">
-                      <path
-                        d="M 20 90 A 70 70 0 0 1 160 90"
-                        fill="none"
-                        stroke="#e2e8f0"
-                        strokeWidth="12"
-                        strokeLinecap="round"
-                      />
-                      <path
-                        d="M 20 90 A 70 70 0 0 1 160 90"
-                        fill="none"
-                        stroke="#584de4"
-                        strokeWidth="12"
-                        strokeLinecap="round"
-                        strokeDasharray="220"
-                        strokeDashoffset="220"
-                      />
-                    </svg>
-                    <div className="sd-perf-gauge-content">
-                      <strong className="sd-perf-gauge-percent">0%</strong>
-                      <span className="sd-perf-gauge-label">Correct</span>
+                return (
+                  <>
+                    {/* Student Advice / Success Banner */}
+                    <div className="sd-perf-advice-banner">
+                      <div className="sd-advice-avatar">
+                        <img
+                          src="/images/landing-hero-nurse.jpg"
+                          alt="NCLEX Expert"
+                          className="sd-advice-avatar-img"
+                        />
+                      </div>
+                      <div className="sd-advice-text">
+                        <span>
+                          <strong>99% of NCLEXLab students who meet all targets pass the NCLEX.</strong> You&apos;ve met {targetsMet} of 3 targets... {targetsMet === 3 ? "You are fully exam ready!" : targetsMet === 2 ? "Almost there!" : "Keep practicing!"}
+                        </span>
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="sd-perf-target-badge">
-                    <Target size={14} className="sd-perf-target-icon" />
-                    <span>Target: 62%</span>
-                  </div>
+                    {/* 3 Metric Cards Grid */}
+                    <div className="sd-perf-cards-grid">
+                      {/* Card 1: Your Score */}
+                      <div className="sd-perf-metric-card">
+                        <h3 className="sd-perf-card-title">Your Score</h3>
+                        <div className="sd-perf-gauge-area">
+                          <svg className="sd-perf-gauge-svg" viewBox="0 0 180 100">
+                            <path
+                              d="M 20 90 A 70 70 0 0 1 160 90"
+                              fill="none"
+                              stroke="#e2e8f0"
+                              strokeWidth="12"
+                              strokeLinecap="round"
+                            />
+                            <path
+                              d="M 20 90 A 70 70 0 0 1 160 90"
+                              fill="none"
+                              stroke="#584de4"
+                              strokeWidth="12"
+                              strokeLinecap="round"
+                              strokeDasharray="220"
+                              strokeDashoffset={scoreDashoffset}
+                            />
+                          </svg>
+                          <div className="sd-perf-gauge-content">
+                            <strong className="sd-perf-gauge-percent">{scorePercent}%</strong>
+                            <span className="sd-perf-gauge-label">Correct</span>
+                          </div>
+                        </div>
 
-                  <div className="sd-perf-card-footer">
-                    <span>Correct / Total Pts</span>
-                    <strong>0 / 0</strong>
-                  </div>
-                </div>
+                        <div className="sd-perf-target-badge">
+                          <Target size={14} className="sd-perf-target-icon" />
+                          <span>Target: 62%</span>
+                        </div>
 
-                {/* Card 2: Qbank Usage */}
-                <div className="sd-perf-metric-card">
-                  <h3 className="sd-perf-card-title">Qbank Usage</h3>
-                  <div className="sd-perf-gauge-area">
-                    <svg className="sd-perf-gauge-svg" viewBox="0 0 180 100">
-                      <path
-                        d="M 20 90 A 70 70 0 0 1 160 90"
-                        fill="none"
-                        stroke="#e2e8f0"
-                        strokeWidth="12"
-                        strokeLinecap="round"
-                      />
-                      <path
-                        d="M 20 90 A 70 70 0 0 1 160 90"
-                        fill="none"
-                        stroke="#584de4"
-                        strokeWidth="12"
-                        strokeLinecap="round"
-                        strokeDasharray="220"
-                        strokeDashoffset="220"
-                      />
-                    </svg>
-                    <div className="sd-perf-gauge-content">
-                      <strong className="sd-perf-gauge-percent">0%</strong>
-                      <span className="sd-perf-gauge-label">Used</span>
-                    </div>
-                  </div>
+                        <div className="sd-perf-card-footer">
+                          <span>Correct / Total Pts</span>
+                          <strong>{totalCorrect} / {totalAnswered}</strong>
+                        </div>
+                      </div>
 
-                  <div className="sd-perf-target-badge">
-                    <Target size={14} className="sd-perf-target-icon" />
-                    <span>Target: 85%</span>
-                  </div>
+                      {/* Card 2: Qbank Usage */}
+                      <div className="sd-perf-metric-card">
+                        <h3 className="sd-perf-card-title">Qbank Usage</h3>
+                        <div className="sd-perf-gauge-area">
+                          <svg className="sd-perf-gauge-svg" viewBox="0 0 180 100">
+                            <path
+                              d="M 20 90 A 70 70 0 0 1 160 90"
+                              fill="none"
+                              stroke="#e2e8f0"
+                              strokeWidth="12"
+                              strokeLinecap="round"
+                            />
+                            <path
+                              d="M 20 90 A 70 70 0 0 1 160 90"
+                              fill="none"
+                              stroke="#584de4"
+                              strokeWidth="12"
+                              strokeLinecap="round"
+                              strokeDasharray="220"
+                              strokeDashoffset={usageDashoffset}
+                            />
+                          </svg>
+                          <div className="sd-perf-gauge-content">
+                            <strong className="sd-perf-gauge-percent">{usagePercent}%</strong>
+                            <span className="sd-perf-gauge-label">Used</span>
+                          </div>
+                        </div>
 
-                  <div className="sd-perf-card-footer sd-perf-footer-list">
-                    <div className="sd-perf-stat-line">
-                      <span>Used Questions</span>
-                      <strong>0</strong>
-                    </div>
-                    <div className="sd-perf-stat-line">
-                      <span>Unused Questions</span>
-                      <strong>1580</strong>
-                    </div>
-                    <div className="sd-perf-stat-line">
-                      <span>Total Questions</span>
-                      <strong>1580</strong>
-                    </div>
-                  </div>
-                </div>
+                        <div className="sd-perf-target-badge">
+                          <Target size={14} className="sd-perf-target-icon" />
+                          <span>Target: 85%</span>
+                        </div>
 
-                {/* Card 3: Readiness Exam Results */}
-                <div className="sd-perf-metric-card">
-                  <h3 className="sd-perf-card-title">Readiness Exam Results</h3>
-                  <div className="sd-perf-exam-list">
-                    <div className="sd-perf-exam-row">
-                      <span className="sd-perf-exam-name">Exam 1</span>
-                      <span className="sd-perf-exam-status">Not Attempted</span>
-                    </div>
-                    <div className="sd-perf-exam-row">
-                      <span className="sd-perf-exam-name">Exam 2</span>
-                      <span className="sd-perf-exam-status">Not Attempted</span>
-                    </div>
-                    <div className="sd-perf-exam-row">
-                      <span className="sd-perf-exam-name">Exam 3</span>
-                      <span className="sd-perf-exam-status">Not Attempted</span>
-                    </div>
-                    <div className="sd-perf-exam-row">
-                      <span className="sd-perf-exam-name">Exam 4</span>
-                      <span className="sd-perf-exam-status">Not Attempted</span>
-                    </div>
-                  </div>
+                        <div className="sd-perf-card-footer sd-perf-footer-list">
+                          <div className="sd-perf-stat-line">
+                            <span>Used Questions</span>
+                            <strong>{totalAnswered}</strong>
+                          </div>
+                          <div className="sd-perf-stat-line">
+                            <span>Unused Questions</span>
+                            <strong>{Math.max(0, totalQBank - totalAnswered)}</strong>
+                          </div>
+                          <div className="sd-perf-stat-line">
+                            <span>Total Questions</span>
+                            <strong>{totalQBank}</strong>
+                          </div>
+                        </div>
+                      </div>
 
-                  <div className="sd-perf-target-badge sd-perf-target-badge-red">
-                    <Target size={14} className="sd-perf-target-icon" />
-                    <span>Target: Attempt All 4</span>
-                  </div>
+                      {/* Card 3: Readiness Exam Results */}
+                      <div className="sd-perf-metric-card">
+                        <h3 className="sd-perf-card-title">Readiness Exam Results</h3>
+                        <div className="sd-perf-exam-list">
+                          <div className="sd-perf-exam-row">
+                            <span className="sd-perf-exam-name">Exam 1</span>
+                            <span className={`sd-perf-exam-status ${cat1?.passStatus === "PASS" ? "green" : ""}`}>
+                              {cat1 ? `${cat1.passStatus} (${cat1.passProbability}%)` : "Not Attempted"}
+                            </span>
+                          </div>
+                          <div className="sd-perf-exam-row">
+                            <span className="sd-perf-exam-name">Exam 2</span>
+                            <span className={`sd-perf-exam-status ${cat2?.passStatus === "PASS" ? "green" : ""}`}>
+                              {cat2 ? `${cat2.passStatus} (${cat2.passProbability}%)` : "Not Attempted"}
+                            </span>
+                          </div>
+                          <div className="sd-perf-exam-row">
+                            <span className="sd-perf-exam-name">Exam 3</span>
+                            <span className={`sd-perf-exam-status ${cat3?.passStatus === "PASS" ? "green" : ""}`}>
+                              {cat3 ? `${cat3.passStatus} (${cat3.passProbability}%)` : "Not Attempted"}
+                            </span>
+                          </div>
+                          <div className="sd-perf-exam-row">
+                            <span className="sd-perf-exam-name">Exam 4</span>
+                            <span className={`sd-perf-exam-status ${cat4?.passStatus === "PASS" ? "green" : ""}`}>
+                              {cat4 ? `${cat4.passStatus} (${cat4.passProbability}%)` : "Not Attempted"}
+                            </span>
+                          </div>
+                        </div>
 
-                  <div className="sd-perf-card-footer">
-                    <span>Correct / Total Pts</span>
-                    <strong>0 / 0</strong>
-                  </div>
-                </div>
-              </div>
+                        <div className={`sd-perf-target-badge ${savedCatSummaries.length === 4 ? "" : "sd-perf-target-badge-red"}`}>
+                          <Target size={14} className="sd-perf-target-icon" />
+                          <span>Target: Attempt All 4 ({savedCatSummaries.length}/4)</span>
+                        </div>
+
+                        <div className="sd-perf-card-footer">
+                          <span>Readiness Status</span>
+                          <strong>{hasPassedCat ? "Likely to Pass" : "In Progress"}</strong>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
             </section>
 
             {/* 3. Subject Performance Section */}
@@ -5850,72 +6984,79 @@ const StudentDashboard = (): ReactElement => {
 
             {/* 2. 4 CAT Exam Cards */}
             <section className="sd-cat-exams-list" aria-label="CAT Readiness Exams List">
-              {/* Card 1: CAT Readiness Exam 1 */}
-              <div className="sd-cat-exam-card">
-                <div className="sd-cat-exam-info">
-                  <span className="sd-cat-exam-num">1</span>
-                  <strong className="sd-cat-exam-title">CAT Readiness Exam 1</strong>
-                </div>
-                <button
-                  type="button"
-                  className="sd-btn-start-cat"
-                  onClick={() => {
-                    setIsTestActive(true);
-                    setTestQuestionIndex(0);
-                    setTestTimerSeconds(40);
-                  }}
-                >
-                  Start Exam
-                </button>
-              </div>
+              {[1, 2, 3, 4].map((num) => {
+                const pastSummary = savedCatSummaries.find((s) => s.examNumber === num);
+                const isLocked = num > 1 && !membership.isPaid;
 
-              {/* Card 2: CAT Readiness Exam 2 */}
-              <div className="sd-cat-exam-card">
-                <div className="sd-cat-exam-info">
-                  <span className="sd-cat-exam-num">2</span>
-                  <strong className="sd-cat-exam-title">CAT Readiness Exam 2</strong>
-                </div>
-                <button
-                  type="button"
-                  className="sd-btn-upgrade-cat"
-                  onClick={() => setIsUpgradeModalOpen(true)}
-                >
-                  <Shield size={14} />
-                  <span>Upgrade</span>
-                </button>
-              </div>
+                return (
+                  <div key={num} className="sd-cat-exam-card">
+                    <div className="sd-cat-exam-info">
+                      <span className="sd-cat-exam-num">{num}</span>
+                      <div>
+                        <strong className="sd-cat-exam-title">CAT Readiness Exam {num}</strong>
+                        {pastSummary ? (
+                          <div style={{ display: "flex", gap: "6px", alignItems: "center", marginTop: "3px" }}>
+                            <span style={{
+                              fontSize: "11px",
+                              fontWeight: 700,
+                              padding: "2px 7px",
+                              borderRadius: "4px",
+                              backgroundColor: pastSummary.passStatus === "PASS" ? "#dcfce7" : "#fee2e2",
+                              color: pastSummary.passStatus === "PASS" ? "#166534" : "#991b1b"
+                            }}>
+                              {pastSummary.passStatus} · {pastSummary.passProbability}% Likelihood
+                            </span>
+                            <span style={{ fontSize: "11px", color: "#64748b" }}>
+                              {pastSummary.totalQuestions} Questions · {new Date(pastSummary.completedAt).toLocaleDateString()}
+                            </span>
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "2px" }}>
+                            85 - 150 Adaptive Items · Rasch IRT Model
+                          </div>
+                        )}
+                      </div>
+                    </div>
 
-              {/* Card 3: CAT Readiness Exam 3 */}
-              <div className="sd-cat-exam-card">
-                <div className="sd-cat-exam-info">
-                  <span className="sd-cat-exam-num">3</span>
-                  <strong className="sd-cat-exam-title">CAT Readiness Exam 3</strong>
-                </div>
-                <button
-                  type="button"
-                  className="sd-btn-upgrade-cat"
-                  onClick={() => setIsUpgradeModalOpen(true)}
-                >
-                  <Shield size={14} />
-                  <span>Upgrade</span>
-                </button>
-              </div>
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                      {pastSummary && (
+                        <button
+                          type="button"
+                          className="sd-btn-create-test-pill"
+                          style={{ padding: "6px 12px", fontSize: "12px", backgroundColor: "#f1f0fb", color: "#4f46e5", border: "1px solid #c7d2fe" }}
+                          onClick={() => {
+                            setCatExamSummary(pastSummary);
+                            setActiveTestExamType("cat");
+                            setIsResultsScreenActive(true);
+                            setIsTestActive(true);
+                          }}
+                        >
+                          View Report
+                        </button>
+                      )}
 
-              {/* Card 4: CAT Readiness Exam 4 */}
-              <div className="sd-cat-exam-card">
-                <div className="sd-cat-exam-info">
-                  <span className="sd-cat-exam-num">4</span>
-                  <strong className="sd-cat-exam-title">CAT Readiness Exam 4</strong>
-                </div>
-                <button
-                  type="button"
-                  className="sd-btn-upgrade-cat"
-                  onClick={() => setIsUpgradeModalOpen(true)}
-                >
-                  <Shield size={14} />
-                  <span>Upgrade</span>
-                </button>
-              </div>
+                      {isLocked ? (
+                        <button
+                          type="button"
+                          className="sd-btn-upgrade-cat"
+                          onClick={() => setIsUpgradeModalOpen(true)}
+                        >
+                          <Shield size={14} />
+                          <span>Upgrade</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="sd-btn-start-cat"
+                          onClick={() => startCatExam(num as 1 | 2 | 3 | 4)}
+                        >
+                          {pastSummary ? "Retake Exam" : "Start Exam"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </section>
 
             {/* 3. FAQs Section */}
@@ -5997,36 +7138,96 @@ const StudentDashboard = (): ReactElement => {
                 <span className="sd-prev-th sd-prev-th-score">Score</span>
                 <span className="sd-prev-th sd-prev-th-avg">Avg. Score</span>
                 <span className="sd-prev-th sd-prev-th-questions">Questions</span>
+                <span className="sd-prev-th" style={{ textAlign: "right" }}>Action</span>
               </div>
 
-              {/* Empty State */}
-              <div className="sd-prev-empty-state">
-                <div className="sd-prev-empty-art" aria-hidden="true">
-                  <svg width="86" height="58" viewBox="0 0 86 58" fill="none">
-                    <rect x="1" y="1" width="84" height="56" rx="8" fill="#F8FAFC" stroke="#C7D2FE" strokeWidth="2" />
-                    <path d="M1 12H85" stroke="#C7D2FE" strokeWidth="1.5" />
-                    <circle cx="9" cy="6.5" r="2" fill="#818CF8" />
-                    <circle cx="16" cy="6.5" r="2" fill="#A5B4FC" />
-                    <rect x="10" y="20" width="30" height="4" rx="2" fill="#C7D2FE" />
-                    <rect x="46" y="20" width="28" height="4" rx="2" fill="#E0E7FF" />
-                    <rect x="10" y="32" width="30" height="4" rx="2" fill="#C7D2FE" />
-                    <rect x="46" y="32" width="28" height="4" rx="2" fill="#E0E7FF" />
-                    <rect x="10" y="44" width="30" height="4" rx="2" fill="#C7D2FE" />
-                    <rect x="46" y="44" width="28" height="4" rx="2" fill="#E0E7FF" />
-                  </svg>
+              {savedPreviousTests.length > 0 ? (
+                <div className="sd-prev-table-body">
+                  {savedPreviousTests.map((t, idx) => (
+                    <div key={t.id} className="sd-prev-table-row" style={{
+                      display: "grid",
+                      gridTemplateColumns: "36px 2fr 1.2fr 1fr 1fr 1fr 1fr 80px",
+                      padding: "12px 16px",
+                      alignItems: "center",
+                      borderBottom: "1px solid #f1f5f9",
+                      fontSize: "13px"
+                    }}>
+                      <span style={{ fontWeight: 600, color: "#64748b" }}>{idx + 1}</span>
+                      <strong style={{ color: "#1e293b" }}>{t.name}</strong>
+                      <span style={{ color: "#64748b" }}>{t.pool}</span>
+                      <span style={{ color: "#64748b" }}>{t.date}</span>
+                      <span style={{
+                        fontWeight: 700,
+                        color: t.scorePercent >= 65 ? "#16a34a" : "#dc2626"
+                      }}>
+                        {t.scorePercent}%
+                      </span>
+                      <span style={{ color: "#64748b" }}>{t.avgScorePercent}%</span>
+                      <span style={{ color: "#334155", fontWeight: 600 }}>{t.answeredCount} / {t.totalQuestions}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (t.type === "cat") {
+                            const summary = savedCatSummaries.find((s) => s.examId === t.id);
+                            if (summary) {
+                              setCatExamSummary(summary);
+                              setActiveTestExamType("cat");
+                              setIsResultsScreenActive(true);
+                              setIsTestActive(true);
+                            } else {
+                              setActiveTab("cat-exams");
+                            }
+                          } else {
+                            setActiveTab("home");
+                            setIsCreateTestOpen(true);
+                          }
+                        }}
+                        style={{
+                          padding: "4px 10px",
+                          borderRadius: "4px",
+                          backgroundColor: "#f1f0fb",
+                          color: "#4f46e5",
+                          border: "1px solid #c7d2fe",
+                          fontSize: "12px",
+                          fontWeight: 600,
+                          cursor: "pointer"
+                        }}
+                      >
+                        Review
+                      </button>
+                    </div>
+                  ))}
                 </div>
-                <p className="sd-prev-empty-text">
-                  Tests you end or pause will appear here for you to review. Try creating a test.
-                </p>
-                <button
-                  type="button"
-                  className="sd-btn-create-test-pill"
-                  onClick={() => setIsCreateTestOpen(true)}
-                >
-                  <Plus size={16} />
-                  <span>Create Test</span>
-                </button>
-              </div>
+              ) : (
+                /* Empty State */
+                <div className="sd-prev-empty-state">
+                  <div className="sd-prev-empty-art" aria-hidden="true">
+                    <svg width="86" height="58" viewBox="0 0 86 58" fill="none">
+                      <rect x="1" y="1" width="84" height="56" rx="8" fill="#F8FAFC" stroke="#C7D2FE" strokeWidth="2" />
+                      <path d="M1 12H85" stroke="#C7D2FE" strokeWidth="1.5" />
+                      <circle cx="9" cy="6.5" r="2" fill="#818CF8" />
+                      <circle cx="16" cy="6.5" r="2" fill="#A5B4FC" />
+                      <rect x="10" y="20" width="30" height="4" rx="2" fill="#C7D2FE" />
+                      <rect x="46" y="20" width="28" height="4" rx="2" fill="#E0E7FF" />
+                      <rect x="10" y="32" width="30" height="4" rx="2" fill="#C7D2FE" />
+                      <rect x="46" y="32" width="28" height="4" rx="2" fill="#E0E7FF" />
+                      <rect x="10" y="44" width="30" height="4" rx="2" fill="#C7D2FE" />
+                      <rect x="46" y="44" width="28" height="4" rx="2" fill="#E0E7FF" />
+                    </svg>
+                  </div>
+                  <p className="sd-prev-empty-text">
+                    Tests you end or pause will appear here for you to review. Try creating a test.
+                  </p>
+                  <button
+                    type="button"
+                    className="sd-btn-create-test-pill"
+                    onClick={() => setIsCreateTestOpen(true)}
+                  >
+                    <Plus size={16} />
+                    <span>Create Test</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         ) : activeTab === "case-studies" ? (
@@ -6718,8 +7919,8 @@ const StudentDashboard = (): ReactElement => {
                 .filter((sub) =>
                   crashFilterQuery
                     ? sub.name.toLowerCase().includes(crashFilterQuery.toLowerCase()) ||
-                      crashFilterQuery.toLowerCase().includes("lesson") ||
-                      crashFilterQuery.toLowerCase().includes("crash")
+                    crashFilterQuery.toLowerCase().includes("lesson") ||
+                    crashFilterQuery.toLowerCase().includes("crash")
                     : true
                 )
                 .map((sub) => {
@@ -6730,7 +7931,7 @@ const StudentDashboard = (): ReactElement => {
                     sub.id === "management-of-care"
                       ? filteredMocCrashLessons
                       : sub.id === "child-health"
-                      ? childHealthCrashTopics.map((t) => ({
+                        ? childHealthCrashTopics.map((t) => ({
                           id: `ch-${t.id}`,
                           type: "video" as const,
                           title: t.title,
@@ -6738,22 +7939,22 @@ const StudentDashboard = (): ReactElement => {
                           questionsTotal: t.questionsTotal,
                           isUnlocked: t.isUnlocked
                         }))
-                      : sub.id === "fundamentals"
-                      ? fundamentalsCrashLessons
-                      : sub.id === "maternal-newborn"
-                      ? maternalNewbornCrashLessons
-                      : sub.id === "mental-health"
-                      ? mentalHealthCrashLessons
-                      : sub.id === "pharmacology"
-                      ? pharmacologyCrashLessons
-                      : adultHealthCrashTopics.map((t) => ({
-                          id: `ah-${t.id}`,
-                          type: "video" as const,
-                          title: t.title,
-                          duration: t.videoDuration,
-                          questionsTotal: t.questionsTotal,
-                          isUnlocked: t.isUnlocked
-                        }));
+                        : sub.id === "fundamentals"
+                          ? fundamentalsCrashLessons
+                          : sub.id === "maternal-newborn"
+                            ? maternalNewbornCrashLessons
+                            : sub.id === "mental-health"
+                              ? mentalHealthCrashLessons
+                              : sub.id === "pharmacology"
+                                ? pharmacologyCrashLessons
+                                : adultHealthCrashTopics.map((t) => ({
+                                  id: `ah-${t.id}`,
+                                  type: "video" as const,
+                                  title: t.title,
+                                  duration: t.videoDuration,
+                                  questionsTotal: t.questionsTotal,
+                                  isUnlocked: t.isUnlocked
+                                }));
 
                   return (
                     <div key={sub.id} className="sd-crash-hub-card">
@@ -6813,9 +8014,8 @@ const StudentDashboard = (): ReactElement => {
                                   <div className="sd-crash-row-left">
                                     <button
                                       type="button"
-                                      className={`sd-crash-check-circle ${
-                                        isLessonCompleted ? "sd-crash-check-circle-done" : ""
-                                      }`}
+                                      className={`sd-crash-check-circle ${isLessonCompleted ? "sd-crash-check-circle-done" : ""
+                                        }`}
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         setCompletedCrashLessons((prev) => ({
@@ -6829,11 +8029,10 @@ const StudentDashboard = (): ReactElement => {
                                     </button>
 
                                     <span
-                                      className={`sd-crash-badge ${
-                                        lesson.type === "video"
-                                          ? "sd-crash-badge-video"
-                                          : "sd-crash-badge-bites"
-                                      }`}
+                                      className={`sd-crash-badge ${lesson.type === "video"
+                                        ? "sd-crash-badge-video"
+                                        : "sd-crash-badge-bites"
+                                        }`}
                                     >
                                       {lesson.type === "video" ? "Video" : "Bites"}
                                     </span>
@@ -6937,16 +8136,15 @@ const StudentDashboard = (): ReactElement => {
                           sub.id === "all"
                             ? "All Systems"
                             : sub.id === "management-of-care"
-                            ? "All Management of Care"
-                            : `All ${sub.name}`
+                              ? "All Management of Care"
+                              : `All ${sub.name}`
                         );
                       }}
                     >
                       <Icon
                         size={15}
-                        className={`sd-cheats-sub-icon ${
-                          sub.id === "all" ? "sd-cheats-sub-icon-star" : ""
-                        }`}
+                        className={`sd-cheats-sub-icon ${sub.id === "all" ? "sd-cheats-sub-icon-star" : ""
+                          }`}
                       />
                       <span>{sub.name}</span>
                     </button>
@@ -6990,18 +8188,18 @@ const StudentDashboard = (): ReactElement => {
                   {(selectedCheatHubSubject === "all"
                     ? allHubCheatSystems
                     : selectedCheatHubSubject === "management-of-care"
-                    ? managementOfCareCheatSheetCategories
-                    : selectedCheatHubSubject === "child-health"
-                    ? childHealthCheatSheetCategories
-                    : selectedCheatHubSubject === "fundamentals"
-                    ? fundamentalsCheatSheetCategories
-                    : selectedCheatHubSubject === "maternal-newborn"
-                    ? maternalNewbornCheatSheetCategories
-                    : selectedCheatHubSubject === "mental-health"
-                    ? mentalHealthCheatSheetCategories
-                    : selectedCheatHubSubject === "pharmacology"
-                    ? pharmacologyCheatSheetCategories
-                    : cheatSheetCategories
+                      ? managementOfCareCheatSheetCategories
+                      : selectedCheatHubSubject === "child-health"
+                        ? childHealthCheatSheetCategories
+                        : selectedCheatHubSubject === "fundamentals"
+                          ? fundamentalsCheatSheetCategories
+                          : selectedCheatHubSubject === "maternal-newborn"
+                            ? maternalNewbornCheatSheetCategories
+                            : selectedCheatHubSubject === "mental-health"
+                              ? mentalHealthCheatSheetCategories
+                              : selectedCheatHubSubject === "pharmacology"
+                                ? pharmacologyCheatSheetCategories
+                                : cheatSheetCategories
                   ).map((cat) => {
                     const isSystemActive = selectedCheatHubSystem === cat;
                     return (
@@ -7022,18 +8220,18 @@ const StudentDashboard = (): ReactElement => {
                   {(selectedCheatHubSubject === "all"
                     ? allHubCheatSheetsCombined
                     : selectedCheatHubSubject === "management-of-care"
-                    ? managementOfCareCheatSheets
-                    : selectedCheatHubSubject === "child-health"
-                    ? childHealthCheatSheets
-                    : selectedCheatHubSubject === "fundamentals"
-                    ? fundamentalsCheatSheets
-                    : selectedCheatHubSubject === "maternal-newborn"
-                    ? maternalNewbornCheatSheets
-                    : selectedCheatHubSubject === "mental-health"
-                    ? mentalHealthCheatSheets
-                    : selectedCheatHubSubject === "pharmacology"
-                    ? pharmacologyCheatSheets
-                    : adultHealthCheatSheets
+                      ? managementOfCareCheatSheets
+                      : selectedCheatHubSubject === "child-health"
+                        ? childHealthCheatSheets
+                        : selectedCheatHubSubject === "fundamentals"
+                          ? fundamentalsCheatSheets
+                          : selectedCheatHubSubject === "maternal-newborn"
+                            ? maternalNewbornCheatSheets
+                            : selectedCheatHubSubject === "mental-health"
+                              ? mentalHealthCheatSheets
+                              : selectedCheatHubSubject === "pharmacology"
+                                ? pharmacologyCheatSheets
+                                : adultHealthCheatSheets
                   )
                     .filter((item) => {
                       // System filter
@@ -7198,9 +8396,9 @@ const StudentDashboard = (): ReactElement => {
                 .filter((mod) =>
                   strategyFilterQuery
                     ? mod.title.toLowerCase().includes(strategyFilterQuery.toLowerCase()) ||
-                      mod.lessons.some((l) =>
-                        l.title.toLowerCase().includes(strategyFilterQuery.toLowerCase())
-                      )
+                    mod.lessons.some((l) =>
+                      l.title.toLowerCase().includes(strategyFilterQuery.toLowerCase())
+                    )
                     : true
                 )
                 .map((mod) => {
@@ -7257,9 +8455,8 @@ const StudentDashboard = (): ReactElement => {
                                   <div className="sd-crash-row-left">
                                     <button
                                       type="button"
-                                      className={`sd-crash-check-circle ${
-                                        isCompleted ? "sd-crash-check-circle-done" : ""
-                                      }`}
+                                      className={`sd-crash-check-circle ${isCompleted ? "sd-crash-check-circle-done" : ""
+                                        }`}
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         setCompletedCrashLessons((prev) => ({
@@ -7391,8 +8588,8 @@ const StudentDashboard = (): ReactElement => {
                     {selectedSubjectId === "maternal-newborn"
                       ? "Maternal And Newborn Health"
                       : selectedSubjectId === "management-of-care"
-                      ? "Management Of Care"
-                      : subjectsList.find((s) => s.id === selectedSubjectId)?.name || "Adult Health"}
+                        ? "Management Of Care"
+                        : subjectsList.find((s) => s.id === selectedSubjectId)?.name || "Adult Health"}
                   </span>
                 </nav>
                 <h1 className="sd-perf-title">
@@ -7458,19 +8655,19 @@ const StudentDashboard = (): ReactElement => {
             <div className="sd-subj-tabs-nav" role="tablist">
               {(selectedSubjectId === "fundamentals" || selectedSubjectId === "management-of-care"
                 ? [
-                    { id: "standalone", label: "Standalone Questions" },
-                    { id: "crash-course", label: "Crash Course Videos" },
-                    { id: "cheat-sheets", label: "Cheat Sheets" },
-                    { id: "performance", label: "Performance" }
-                  ]
+                  { id: "standalone", label: "Standalone Questions" },
+                  { id: "crash-course", label: "Crash Course Videos" },
+                  { id: "cheat-sheets", label: "Cheat Sheets" },
+                  { id: "performance", label: "Performance" }
+                ]
                 : selectedSubjectId === "pharmacology" && subjectSubTab !== "case-studies"
-                ? [
+                  ? [
                     { id: "standalone", label: "Standalone Questions" },
                     { id: "cheat-sheets", label: "Cheat Sheets" },
                     { id: "crash-course", label: "Crash Course Videos" },
                     { id: "performance", label: "Performance" }
                   ]
-                : [
+                  : [
                     { id: "case-studies", label: "Case Studies" },
                     { id: "standalone", label: "Standalone Questions" },
                     { id: "crash-course", label: "Crash Course Videos" },
@@ -7719,9 +8916,8 @@ const StudentDashboard = (): ReactElement => {
                                 <div className="sd-crash-row-left">
                                   <button
                                     type="button"
-                                    className={`sd-crash-check-circle ${
-                                      isDone ? "sd-crash-check-circle-done" : ""
-                                    }`}
+                                    className={`sd-crash-check-circle ${isDone ? "sd-crash-check-circle-done" : ""
+                                      }`}
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       setCompletedCrashLessons((prev) => ({
@@ -7737,9 +8933,8 @@ const StudentDashboard = (): ReactElement => {
                                     <FileText size={12} style={{ color: "#94a3b8", flexShrink: 0 }} />
                                   )}
                                   <span
-                                    className={`sd-crash-badge ${
-                                      lesson.type === "video" ? "sd-badge-video" : "sd-badge-quiz"
-                                    }`}
+                                    className={`sd-crash-badge ${lesson.type === "video" ? "sd-badge-video" : "sd-badge-quiz"
+                                      }`}
                                   >
                                     {lesson.type === "video" ? "Video" : "Bites"}
                                   </span>
@@ -7813,9 +9008,8 @@ const StudentDashboard = (): ReactElement => {
                                 <div className="sd-crash-row-left">
                                   <button
                                     type="button"
-                                    className={`sd-crash-check-circle ${
-                                      isVideoDone ? "sd-crash-check-circle-done" : ""
-                                    }`}
+                                    className={`sd-crash-check-circle ${isVideoDone ? "sd-crash-check-circle-done" : ""
+                                      }`}
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       setCompletedCrashLessons((prev) => ({
@@ -7860,9 +9054,8 @@ const StudentDashboard = (): ReactElement => {
                                 <div className="sd-crash-row-left">
                                   <button
                                     type="button"
-                                    className={`sd-crash-check-circle ${
-                                      isQuizDone ? "sd-crash-check-circle-done" : ""
-                                    }`}
+                                    className={`sd-crash-check-circle ${isQuizDone ? "sd-crash-check-circle-done" : ""
+                                      }`}
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       setCompletedCrashLessons((prev) => ({
@@ -8001,30 +9194,30 @@ const StudentDashboard = (): ReactElement => {
                                 selectedSubjectId === "management-of-care"
                                   ? "#FEE2E2"
                                   : selectedSubjectId === "pharmacology"
-                                  ? "#FCE7F3"
-                                  : selectedSubjectId === "mental-health"
-                                  ? "#FEF3C7"
-                                  : selectedSubjectId === "maternal-newborn"
-                                  ? "#E0F2FE"
-                                  : selectedSubjectId === "fundamentals"
-                                  ? "#FFE4E6"
-                                  : selectedSubjectId === "child-health"
-                                  ? "#FCE7F3"
-                                  : "#FEE2E2",
+                                    ? "#FCE7F3"
+                                    : selectedSubjectId === "mental-health"
+                                      ? "#FEF3C7"
+                                      : selectedSubjectId === "maternal-newborn"
+                                        ? "#E0F2FE"
+                                        : selectedSubjectId === "fundamentals"
+                                          ? "#FFE4E6"
+                                          : selectedSubjectId === "child-health"
+                                            ? "#FCE7F3"
+                                            : "#FEE2E2",
                               color:
                                 selectedSubjectId === "management-of-care"
                                   ? "#DC2626"
                                   : selectedSubjectId === "pharmacology"
-                                  ? "#DB2777"
-                                  : selectedSubjectId === "mental-health"
-                                  ? "#D97706"
-                                  : selectedSubjectId === "maternal-newborn"
-                                  ? "#0284C7"
-                                  : selectedSubjectId === "fundamentals"
-                                  ? "#F43F5E"
-                                  : selectedSubjectId === "child-health"
-                                  ? "#EC4899"
-                                  : "#EF4444"
+                                    ? "#DB2777"
+                                    : selectedSubjectId === "mental-health"
+                                      ? "#D97706"
+                                      : selectedSubjectId === "maternal-newborn"
+                                        ? "#0284C7"
+                                        : selectedSubjectId === "fundamentals"
+                                          ? "#F43F5E"
+                                          : selectedSubjectId === "child-health"
+                                            ? "#EC4899"
+                                            : "#EF4444"
                             }}
                           >
                             {selectedSubjectId === "management-of-care" ? (
@@ -8413,664 +9606,586 @@ const StudentDashboard = (): ReactElement => {
              HOME TAB VIEW
              ================================================================ */
           <div className="sd-content">
-          {/* User Greeting */}
-          <div className="sd-greeting-row">
-            <div className="sd-greeting-avatar">R</div>
-            <h1 className="sd-greeting-title">Good afternoon!</h1>
-          </div>
+            {/* User Greeting */}
+            <div className="sd-greeting-row">
+              <div className="sd-greeting-avatar">R</div>
+              <h1 className="sd-greeting-title">Good afternoon!</h1>
+            </div>
 
-          {/* 6 Quick Action Cards (3x2 Grid) */}
-          <section className="sd-action-grid" aria-label="Quick study actions">
-            {/* Card 1: Create Test */}
-            <button
-              type="button"
-              className="sd-action-card"
-              onClick={() => setIsCreateTestOpen(true)}
-            >
-              <div className="sd-action-left">
-                <div className="sd-action-icon sd-icon-purple">
-                  <FilePlus2 size={18} />
-                </div>
-                <div className="sd-action-text">
-                  <strong>Create Test</strong>
-                  <span>Study up to 85 questions at a time</span>
-                </div>
-              </div>
-              <ChevronRight size={17} className="sd-action-chevron" />
-            </button>
-
-            {/* Card 2: Daily Warmup */}
-            <button
-              type="button"
-              className="sd-action-card"
-              onClick={() => setIsUpgradeModalOpen(true)}
-            >
-              <div className="sd-action-left">
-                <div className="sd-action-icon sd-icon-shield">
-                  <ShieldCheck size={18} />
-                </div>
-                <div className="sd-action-text">
-                  <strong>Daily Warmup</strong>
-                  <span className="sd-sub-unlock">Upgrade to unlock</span>
-                </div>
-              </div>
-              <ChevronRight size={17} className="sd-action-chevron" />
-            </button>
-
-            {/* Card 3: Performance */}
-            <button
-              type="button"
-              className="sd-action-card"
-              onClick={() => setActiveTab("performance")}
-            >
-              <div className="sd-action-left">
-                <div className="sd-action-icon sd-icon-chart">
-                  <BarChart3 size={18} />
-                </div>
-                <div className="sd-action-text">
-                  <strong>Performance</strong>
-                  <span>See if you&apos;re ready to pass</span>
-                </div>
-              </div>
-              <ChevronRight size={17} className="sd-action-chevron" />
-            </button>
-
-            {/* Card 4: CAT Readiness Exams */}
-            <button
-              type="button"
-              className="sd-action-card"
-              onClick={() => setActiveTab("cat-exams")}
-            >
-              <div className="sd-action-left">
-                <div className="sd-action-icon sd-icon-target">
-                  <Target size={18} />
-                </div>
-                <div className="sd-action-text">
-                  <strong>CAT Readiness Exams</strong>
-                  <span>Gauge exam readiness</span>
-                </div>
-              </div>
-              <ChevronRight size={17} className="sd-action-chevron" />
-            </button>
-
-            {/* Card 5: Previous Tests */}
-            <button
-              type="button"
-              className="sd-action-card"
-              onClick={() => setActiveTab("previous-tests")}
-            >
-              <div className="sd-action-left">
-                <div className="sd-action-icon sd-icon-history">
-                  <History size={18} />
-                </div>
-                <div className="sd-action-text">
-                  <strong>Previous Tests</strong>
-                  <span>Review past test attempts</span>
-                </div>
-              </div>
-              <ChevronRight size={17} className="sd-action-chevron" />
-            </button>
-
-            {/* Card 6: Study Group */}
-            <a
-              href="https://www.facebook.com/Yoursellhub"
-              target="_blank"
-              rel="noreferrer"
-              className="sd-action-card"
-              title="Join our NCLEX Facebook Study Group"
-            >
-              <div className="sd-action-left">
-                <div className="sd-action-icon sd-icon-group">
-                  <UsersRound size={18} />
-                </div>
-                <div className="sd-action-text">
-                  <strong>Study Group</strong>
-                  <span>Join 250k+ fellow students</span>
-                </div>
-              </div>
-              <ChevronRight size={17} className="sd-action-chevron" />
-            </a>
-          </section>
-
-          {/* Section: Study Schedule (Matches media_1795079503481_ba76319d.jpg exactly) */}
-          <section className="sd-section" aria-labelledby="schedule-heading">
-            <h2 id="schedule-heading" className="sd-section-title">
-              Study Schedule
-            </h2>
-
-            {hasActiveSchedule ? (
-              <div className="sd-cal-widget-card">
-                {/* Calendar Header Row */}
-                <div className="sd-cal-header-row">
-                  <div className="sd-cal-title-col">
-                    <h3 className="sd-cal-month-title">December 2026</h3>
-                    <span className="sd-cal-completed-sub">
-                      {Object.values(scheduleCheckedTasks).filter(Boolean).length} of 128 assignments completed
-                    </span>
+            {/* 6 Quick Action Cards (3x2 Grid) */}
+            <section className="sd-action-grid" aria-label="Quick study actions">
+              {/* Card 1: Create Test */}
+              <button
+                type="button"
+                className="sd-action-card"
+                onClick={() => setIsCreateTestOpen(true)}
+              >
+                <div className="sd-action-left">
+                  <div className="sd-action-icon sd-icon-purple">
+                    <FilePlus2 size={18} />
                   </div>
-
-                  <div className="sd-cal-controls-col">
-                    <div className="sd-cal-btn-group">
-                      <div className="sd-cal-nav-pills">
-                        <button
-                          type="button"
-                          className="sd-cal-nav-btn"
-                          onClick={() => setScheduleWeekIndex((prev) => Math.max(1, prev - 1))}
-                          aria-label="Previous week"
-                        >
-                          &lt;
-                        </button>
-                        <button
-                          type="button"
-                          className="sd-cal-nav-btn"
-                          onClick={() => setScheduleWeekIndex(1)}
-                        >
-                          Today
-                        </button>
-                        <button
-                          type="button"
-                          className="sd-cal-nav-btn"
-                          onClick={() => setScheduleWeekIndex((prev) => Math.min(4, prev + 1))}
-                          aria-label="Next week"
-                        >
-                          &gt;
-                        </button>
-                      </div>
-
-                      <button type="button" className="sd-cal-select-btn">
-                        <span>Week</span>
-                        <ChevronDown size={13} />
-                      </button>
-
-                      <button
-                        type="button"
-                        className="sd-cal-select-btn"
-                        onClick={() => setIsScheduleModalOpen(true)}
-                        title="Rebalance study schedule"
-                      >
-                        <RotateCcw size={12} />
-                        <span>Rebalance</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        className="sd-cal-select-btn"
-                        onClick={() => setIsScheduleModalOpen(true)}
-                        style={{ padding: "5px 7px" }}
-                        title="Schedule Settings"
-                      >
-                        <Settings size={13} />
-                      </button>
-                    </div>
-
-                    <span className="sd-cal-countdown-text">
-                      35 days until exam · Dec 24th, 2026
-                    </span>
+                  <div className="sd-action-text">
+                    <strong>Create Test</strong>
+                    <span>Study up to 85 questions at a time</span>
                   </div>
                 </div>
+                <ChevronRight size={17} className="sd-action-chevron" />
+              </button>
 
-                {/* Calendar Week Grid */}
-                <div className="sd-cal-week-wrapper">
-                  {/* Left Week Number Track */}
-                  <div className="sd-cal-week-track">
-                    Week {scheduleWeekIndex} of 4
+              {/* Card 2: Daily Warmup */}
+              <button
+                type="button"
+                className="sd-action-card"
+                onClick={() => setIsUpgradeModalOpen(true)}
+              >
+                <div className="sd-action-left">
+                  <div className="sd-action-icon sd-icon-shield">
+                    <ShieldCheck size={18} />
                   </div>
-
-                  <div className="sd-cal-grid">
-                    {/* Day 1: Sun 29 */}
-                    <div className="sd-cal-day-col">
-                      <div className="sd-cal-day-header">
-                        <span>Sun 29</span>
-                      </div>
-                      <div className="sd-cal-off-body">
-                        <Sun size={20} color="#cbd5e1" />
-                        <span>Day Off</span>
-                      </div>
-                    </div>
-
-                    {/* Day 2: Mon 30 */}
-                    <div className="sd-cal-day-col">
-                      <div className="sd-cal-day-header">
-                        <span>Mon 30</span>
-                      </div>
-                      <div className="sd-cal-off-body">
-                        <Sun size={20} color="#cbd5e1" />
-                        <span>Day Off</span>
-                      </div>
-                    </div>
-
-                    {/* Day 3: Tue 1 Dec */}
-                    <div className="sd-cal-day-col">
-                      <div className="sd-cal-day-header">
-                        <span>Tue 1 Dec</span>
-                      </div>
-                      <div className="sd-cal-off-body">
-                        <Sun size={20} color="#cbd5e1" />
-                        <span>Day Off</span>
-                      </div>
-                    </div>
-
-                    {/* Day 4: Wed 2 */}
-                    <div className="sd-cal-day-col">
-                      <div className="sd-cal-day-header">
-                        <span>Wed 2</span>
-                      </div>
-                      <div className="sd-cal-off-body">
-                        <Sun size={20} color="#cbd5e1" />
-                        <span>Day Off</span>
-                      </div>
-                    </div>
-
-                    {/* Day 5: Thu 3 */}
-                    <div className="sd-cal-day-col">
-                      <div className="sd-cal-day-header">
-                        <span>Thu 3</span>
-                      </div>
-                      <div className="sd-cal-off-body">
-                        <Sun size={20} color="#cbd5e1" />
-                        <span>Day Off</span>
-                      </div>
-                    </div>
-
-                    {/* Day 6: Fri 4 (5h 15m) */}
-                    <div className="sd-cal-day-col">
-                      <div className="sd-cal-day-header">
-                        <span>Fri 4</span>
-                        <span className="sd-cal-day-hours">5h 15m</span>
-                      </div>
-                      <div className="sd-cal-day-body">
-                        {[
-                          { id: "fri-1", title: "Create Your First Test", duration: "15m", type: "normal" },
-                          { id: "fri-2", title: "Get the NCLEX Question of the Day", duration: "15m", type: "normal" },
-                          { id: "fri-3", title: 'Read "Dr. Emily\'s NCLEX Study Guide"', duration: "15m", type: "normal" },
-                          { id: "fri-4", title: "Join the NCLEX Study Group (Facebook)", duration: "15m", type: "normal" },
-                          { id: "fri-5", title: "[Optional] Next Gen NCLEX Overview", duration: "1h", type: "teal" },
-                          { id: "fri-6", title: "Case Study: Adult Health #1", duration: "30m", type: "normal" },
-                          { id: "fri-7", title: "Case Study: Child Health #1", duration: "30m", type: "normal" },
-                          { id: "fri-8", title: "Case Study: Mental Health #1", duration: "30m", type: "normal" },
-                          { id: "fri-9", title: "75 Adult Health Standalone Questions", duration: "1h 15m", type: "normal" },
-                          { id: "fri-10", title: "20 Child Health, 10 Pharmacology Standalone Questions", duration: "1h", type: "normal" }
-                        ].map((task) => {
-                          const isDone = !!scheduleCheckedTasks[task.id];
-                          return (
-                            <div
-                              key={task.id}
-                              className={`sd-cal-task-card ${
-                                task.type === "teal" ? "task-teal" : task.type === "green" ? "task-green" : ""
-                              } ${isDone ? "sd-cal-task-done" : ""}`}
-                              onClick={() =>
-                                setScheduleCheckedTasks((prev) => ({
-                                  ...prev,
-                                  [task.id]: !prev[task.id]
-                                }))
-                              }
-                            >
-                              <div className="sd-cal-task-header">
-                                <input
-                                  type="checkbox"
-                                  className="sd-cal-task-checkbox"
-                                  checked={isDone}
-                                  onChange={(e) => {
-                                    e.stopPropagation();
-                                    setScheduleCheckedTasks((prev) => ({
-                                      ...prev,
-                                      [task.id]: !prev[task.id]
-                                    }));
-                                  }}
-                                />
-                                <span>{task.title}</span>
-                              </div>
-                              <div className="sd-cal-task-meta">
-                                <span>{task.duration}</span>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Day 7: Sat 5 (5h 15m) */}
-                    <div className="sd-cal-day-col">
-                      <div className="sd-cal-day-header">
-                        <span>Sat 5</span>
-                        <span className="sd-cal-day-hours">5h 15m</span>
-                      </div>
-                      <div className="sd-cal-day-body">
-                        {[
-                          { id: "sat-1", title: "30 Mental Health Standalone Questions", duration: "1h 15m", type: "normal" },
-                          { id: "sat-2", title: "Case Study: Adult Health #2", duration: "30m", type: "normal" },
-                          { id: "sat-3", title: "Case Study: Child Health #2", duration: "30m", type: "normal" },
-                          { id: "sat-4", title: "Case Study: Adult Health #3", duration: "30m", type: "normal" },
-                          { id: "sat-5", title: "20 Fundamentals Standalone Questions", duration: "1h 30m", type: "normal" },
-                          { id: "sat-6", title: "20 Learning and Reviewing Tagged Questions", duration: "1h", type: "normal" },
-                          { id: "sat-7", title: "Review Crash Course Videos and Cheat Sheets", duration: "1h", type: "green" }
-                        ].map((task) => {
-                          const isDone = !!scheduleCheckedTasks[task.id];
-                          return (
-                            <div
-                              key={task.id}
-                              className={`sd-cal-task-card ${
-                                task.type === "teal" ? "task-teal" : task.type === "green" ? "task-green" : ""
-                              } ${isDone ? "sd-cal-task-done" : ""}`}
-                              onClick={() =>
-                                setScheduleCheckedTasks((prev) => ({
-                                  ...prev,
-                                  [task.id]: !prev[task.id]
-                                }))
-                              }
-                            >
-                              <div className="sd-cal-task-header">
-                                <input
-                                  type="checkbox"
-                                  className="sd-cal-task-checkbox"
-                                  checked={isDone}
-                                  onChange={(e) => {
-                                    e.stopPropagation();
-                                    setScheduleCheckedTasks((prev) => ({
-                                      ...prev,
-                                      [task.id]: !prev[task.id]
-                                    }));
-                                  }}
-                                />
-                                <span>{task.title}</span>
-                              </div>
-                              <div className="sd-cal-task-meta">
-                                <span>{task.duration}</span>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
+                  <div className="sd-action-text">
+                    <strong>Daily Warmup</strong>
+                    <span className="sd-sub-unlock">Upgrade to unlock</span>
                   </div>
                 </div>
+                <ChevronRight size={17} className="sd-action-chevron" />
+              </button>
 
-                {/* Footer: View full schedule */}
-                <div className="sd-cal-footer">
-                  <button
-                    type="button"
-                    className="sd-cal-view-all-link"
-                    onClick={() => setIsScheduleModalOpen(true)}
-                  >
-                    View full schedule
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="sd-schedule-card">
-                <div className="sd-schedule-graphic">
-                  <div className="sd-cal-art">
-                    <CalendarDays size={42} className="sd-cal-icon" />
-                    <Clock size={18} className="sd-cal-badge-clock" />
-                    <Check size={14} className="sd-cal-badge-check" />
+              {/* Card 3: Performance */}
+              <button
+                type="button"
+                className="sd-action-card"
+                onClick={() => setActiveTab("performance")}
+              >
+                <div className="sd-action-left">
+                  <div className="sd-action-icon sd-icon-chart">
+                    <BarChart3 size={18} />
+                  </div>
+                  <div className="sd-action-text">
+                    <strong>Performance</strong>
+                    <span>See if you&apos;re ready to pass</span>
                   </div>
                 </div>
-                <h3 className="sd-schedule-headline">
-                  Create Your Personalized NCLEX® Study Schedule
-                </h3>
-                <ul className="sd-schedule-bullets">
-                  <li>
-                    <span className="sd-bullet-check"><Check size={12} /></span>
-                    <span>Know exactly what to study every day</span>
-                  </li>
-                  <li>
-                    <span className="sd-bullet-check"><Check size={12} /></span>
-                    <span>Personalized to your exam date</span>
-                  </li>
-                  <li>
-                    <span className="sd-bullet-check"><Check size={12} /></span>
-                    <span>One-click to get back on track</span>
-                  </li>
-                  <li>
-                    <span className="sd-bullet-check"><Check size={12} /></span>
-                    <span>Proven plan trusted by 200,000+ students</span>
-                  </li>
-                </ul>
-                <button
-                  type="button"
-                  className="sd-btn-schedule"
-                  onClick={() => setIsScheduleModalOpen(true)}
-                >
-                  <Calendar size={17} />
-                  <span>Create Study Schedule</span>
-                </button>
-              </div>
-            )}
-          </section>
+                <ChevronRight size={17} className="sd-action-chevron" />
+              </button>
 
-          {/* Section: Study by Subject */}
-          <section className="sd-section" aria-labelledby="subjects-heading">
-            <h2 id="subjects-heading" className="sd-section-title">
-              Study by Subject
-            </h2>
-            <div className="sd-subjects-list">
-              {filteredSubjects.map((sub) => {
-                const IconComponent = sub.icon;
-                return (
-                  <div
-                    key={sub.id}
-                    className="sd-subject-row"
-                    onClick={() => {
-                      setSelectedSubjectId(sub.id);
-                      setSubjectSubTab(
-                        sub.id === "fundamentals" || sub.id === "management-of-care"
-                          ? "standalone"
-                          : "case-studies"
-                      );
-                      setActiveTab("subject");
-                    }}
-                    style={{ cursor: "pointer" }}
-                  >
-                    {/* Left: Icon & Subject Title */}
-                    <div className="sd-sub-info">
-                      <div
-                        className="sd-sub-icon-badge"
-                        style={{ backgroundColor: sub.iconBg, color: sub.iconColor }}
-                      >
-                        <IconComponent size={18} />
-                      </div>
-                      <div className="sd-sub-titles">
-                        <strong className="sd-sub-name">{sub.name}</strong>
-                        <span className="sd-sub-stat">
-                          {sub.questionsUsed} of {sub.questionsTotal} questions used
-                        </span>
-                      </div>
-                    </div>
+              {/* Card 4: CAT Readiness Exams */}
+              <button
+                type="button"
+                className="sd-action-card"
+                onClick={() => setActiveTab("cat-exams")}
+              >
+                <div className="sd-action-left">
+                  <div className="sd-action-icon sd-icon-target">
+                    <Target size={18} />
+                  </div>
+                  <div className="sd-action-text">
+                    <strong>CAT Readiness Exams</strong>
+                    <span>Gauge exam readiness</span>
+                  </div>
+                </div>
+                <ChevronRight size={17} className="sd-action-chevron" />
+              </button>
 
-                    {/* Center: Progress Bar & Lessons */}
-                    <div className="sd-sub-progress-col">
-                      <div className="sd-prog-bar">
-                        <div
-                          className="sd-prog-fill"
-                          style={{
-                            width: `${(sub.questionsUsed / sub.questionsTotal) * 100}%`
-                          }}
-                        />
+              {/* Card 5: Previous Tests */}
+              <button
+                type="button"
+                className="sd-action-card"
+                onClick={() => setActiveTab("previous-tests")}
+              >
+                <div className="sd-action-left">
+                  <div className="sd-action-icon sd-icon-history">
+                    <History size={18} />
+                  </div>
+                  <div className="sd-action-text">
+                    <strong>Previous Tests</strong>
+                    <span>Review past test attempts</span>
+                  </div>
+                </div>
+                <ChevronRight size={17} className="sd-action-chevron" />
+              </button>
+
+              {/* Card 6: Study Group */}
+              <a
+                href="https://www.facebook.com/Yoursellhub"
+                target="_blank"
+                rel="noreferrer"
+                className="sd-action-card"
+                title="Join our NCLEX Facebook Study Group"
+              >
+                <div className="sd-action-left">
+                  <div className="sd-action-icon sd-icon-group">
+                    <UsersRound size={18} />
+                  </div>
+                  <div className="sd-action-text">
+                    <strong>Study Group</strong>
+                    <span>Join 250k+ fellow students</span>
+                  </div>
+                </div>
+                <ChevronRight size={17} className="sd-action-chevron" />
+              </a>
+            </section>
+
+            {/* Section: Your Study Schedule */}
+            <section className="sd-section" aria-labelledby="schedule-heading">
+              <h2 id="schedule-heading" className="sd-section-title">
+                Your Study Schedule
+              </h2>
+
+              {!isStudyScheduleLoaded ? (
+                <div className="sd-cal-widget-card sd-cal-loading" role="status">Loading your personalized schedule…</div>
+              ) : scheduleLoadError && !scheduleLoadError.toLowerCase().includes("mongodb") && !scheduleLoadError.toLowerCase().includes("database is unavailable") ? (
+                <div className="sd-cal-widget-card sd-cal-error" role="alert">
+                  <p>{scheduleLoadError}</p>
+                  <button type="button" className="sd-cal-select-btn" onClick={() => {
+                    setIsStudyScheduleLoaded(false);
+                    void loadStudentStudySchedule().then((schedule) => { setStudySchedule(schedule); setScheduleLoadError(null); }).catch(() => {
+                      const fallback = createDefaultStudySchedule();
+                      setStudySchedule(fallback);
+                      setScheduleLoadError(null);
+                    }).finally(() => setIsStudyScheduleLoaded(true));
+                  }}>Retry</button>
+                </div>
+              ) : studySchedule && scheduleSummary ? (
+                <div className="sd-cal-widget-card">
+                  <div className="sd-cal-header-row">
+                    <div className="sd-cal-title-col">
+                      <h3 className="sd-cal-month-title">{scheduleMonthLabel}</h3>
+                      <div className="sd-cal-progress-track" role="progressbar" aria-label="Study schedule progress" aria-valuemin={0} aria-valuemax={scheduleSummary.total} aria-valuenow={scheduleSummary.completed}>
+                        <span style={{ width: (scheduleSummary.total > 0 ? scheduleSummary.completed / scheduleSummary.total * 100 : 0) + "%" }} />
                       </div>
-                      <span className="sd-prog-stat">
-                        {sub.lessonsCompleted} of {sub.lessonsTotal} lessons completed
+                      <span className="sd-cal-completed-sub">
+                        {scheduleSummary.completed} of {scheduleSummary.total} assignments completed
                       </span>
                     </div>
 
-                    {/* Right: Content Experts & Chevron */}
-                    <div className="sd-sub-experts-col">
-                      <div className="sd-avatars-pair">
-                        <span
-                          className="sd-pair-avatar"
-                          style={{ backgroundColor: sub.expert1.bg }}
-                          title={sub.expert1.name}
+                    <div className="sd-cal-controls-col">
+                      <div className="sd-cal-btn-group">
+                        <div className="sd-cal-nav-pills">
+                          <button type="button" className="sd-cal-nav-btn" onClick={() => moveScheduleCursor(-1)} aria-label="Previous schedule period">
+                            <ChevronLeft size={14} />
+                          </button>
+                          <button type="button" className="sd-cal-nav-btn" onClick={() => setScheduleCursorDate(toDateKey())}>
+                            Today
+                          </button>
+                          <button type="button" className="sd-cal-nav-btn" onClick={() => moveScheduleCursor(1)} aria-label="Next schedule period">
+                            <ChevronRight size={14} />
+                          </button>
+                        </div>
+
+                        <select
+                          className="sd-cal-select-btn sd-cal-view-select"
+                          aria-label="Schedule view"
+                          value={scheduleView}
+                          onChange={(event) => setScheduleView(event.target.value as StudyScheduleView)}
                         >
-                          {sub.expert1.image ? (
-                            <img
-                              src={sub.expert1.image}
-                              alt={sub.expert1.name}
-                              className="sd-pair-avatar-img"
-                            />
-                          ) : (
-                            sub.expert1.initials
-                          )}
-                        </span>
-                        <span
-                          className="sd-pair-avatar sd-pair-avatar-overlap"
-                          style={{ backgroundColor: sub.expert2.bg }}
-                          title={sub.expert2.name}
-                        >
-                          {sub.expert2.image ? (
-                            <img
-                              src={sub.expert2.image}
-                              alt={sub.expert2.name}
-                              className="sd-pair-avatar-img"
-                            />
-                          ) : (
-                            sub.expert2.initials
-                          )}
-                        </span>
+                          <option value="month">Month</option>
+                          <option value="week">Week</option>
+                          <option value="day">Day</option>
+                        </select>
+
+                        <select className="sd-cal-select-btn" aria-label="Filter schedule assignments" value={scheduleFilter} onChange={(event) => setScheduleFilter(event.target.value as "all" | "questions" | "resources")}>
+                          <option value="all">Full Schedule</option>
+                          <option value="questions">Question Assignments</option>
+                          <option value="resources">Videos &amp; Resources</option>
+                        </select>
+
+                        <button type="button" className="sd-cal-select-btn" onClick={() => openScheduleDialog("rebalance")} title="Rebalance incomplete assignments">
+                          <RotateCcw size={12} />
+                          <span>Rebalance</span>
+                        </button>
+
+                        <button type="button" className="sd-cal-select-btn sd-cal-settings-button" onClick={() => openScheduleDialog("settings")} aria-label="Schedule settings" title="Schedule settings">
+                          <Settings size={13} />
+                        </button>
                       </div>
-                      <div className="sd-experts-text">
-                        <small>CONTENT EXPERTS</small>
-                        <strong>{sub.experts}</strong>
-                      </div>
-                      <ChevronRight size={17} className="sd-sub-chevron" />
+
+                      <span className="sd-cal-countdown-text">
+                        {scheduleCountdown === null
+                          ? "Self-paced schedule"
+                          : scheduleCountdown + " days until exam · " + formatDisplayDate(studySchedule.examDate ?? "")}
+                      </span>
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          </section>
 
-          {/* Section: Study by Question Type */}
-          <section className="sd-section" aria-labelledby="qtypes-heading">
-            <h2 id="qtypes-heading" className="sd-section-title">
-              Study by Question Type
-            </h2>
-            <div className="sd-card-stack">
-              {questionTypes.map((q) => {
-                const Icon = q.icon;
-                return (
-                  <div
-                    key={q.name}
-                    className="sd-stack-row"
-                    onClick={() => {
-                      if (q.name.includes("Case Studies")) {
-                        setActiveTab("case-studies");
-                      } else if (q.name.includes("CAT")) {
-                        setActiveTab("cat-exams");
-                      } else {
-                        setActiveTab("standalone");
-                      }
-                    }}
-                    style={{ cursor: "pointer" }}
-                  >
-                    <div className="sd-stack-left">
-                      <div
-                        className="sd-sub-icon-badge"
-                        style={{ backgroundColor: q.iconBg, color: q.iconColor }}
-                      >
-                        <Icon size={18} />
+                  <div className="sd-cal-week-wrapper">
+                    {scheduleView === "week" && (
+                      <div className="sd-cal-week-track">
+                        Week {getScheduleWeekNumber(studySchedule.startDate, scheduleCursorDate)} of {Math.max(1, getScheduleWeekNumber(studySchedule.startDate, scheduleEndDate))}
                       </div>
-                      <div className="sd-sub-titles">
-                        <strong className="sd-sub-name">{q.name}</strong>
-                        <span className="sd-sub-stat">{q.subtitle}</span>
-                      </div>
-                    </div>
+                    )}
 
-                    <div className="sd-stack-right">
-                      <div className="sd-prog-bar sd-prog-bar-wide">
-                        <div className="sd-prog-fill" style={{ width: "0%" }} />
-                      </div>
-                      <ChevronRight size={17} className="sd-stack-chevron" />
+                    <div className={"sd-cal-grid " + (scheduleView === "day" ? "sd-cal-day-grid" : "") + (scheduleView === "month" ? " sd-cal-month-grid" : "")}>
+                      {visibleScheduleDates.map((dateKey) => {
+                        const tasks = tasksOnScheduleDate(dateKey);
+                        const dailyMinutes = scheduleMinutesOnDate(dateKey);
+                        const outsidePlan = !isWithinSchedule(dateKey);
+                        const dayOff = isScheduleDayOff(dateKey) && tasks.length === 0;
+                        const isToday = dateKey === toDateKey();
+                        return (
+                          <div
+                            key={dateKey}
+                            className={[
+                              "sd-cal-day-col",
+                              outsidePlan ? "sd-cal-day-outside" : "",
+                              isToday ? "sd-cal-day-today" : "",
+                              dayOff ? "sd-cal-day-rest" : ""
+                            ].filter(Boolean).join(" ")}
+                          >
+                            <div className="sd-cal-day-header">
+                              <span>{formatScheduleDay(dateKey)}</span>
+                              {isToday && <span className="sd-cal-today-badge">Today</span>}
+                              <span className="sd-cal-day-hours">
+                                {dailyMinutes > 0 ? formatScheduleDuration(dailyMinutes) : dayOff ? "Day off" : ""}
+                              </span>
+                            </div>
+
+                            {dayOff ? (
+                              <div className="sd-cal-off-body">
+                                <Sun size={18} aria-hidden="true" />
+                                <span>Day Off</span>
+                              </div>
+                            ) : (
+                              <div className="sd-cal-day-body">
+                                {tasks.map((task) => (
+                                  <article key={task.id} className={[
+                                    "sd-cal-task-card",
+                                    `sd-cal-task-${task.action}`,
+                                    task.category === "teal" ? "task-teal" : "",
+                                    task.category === "green" ? "task-green" : "",
+                                    task.completed ? "sd-cal-task-done" : "",
+                                    !task.completed && task.date < toDateKey() ? "sd-cal-task-overdue" : ""
+                                  ].filter(Boolean).join(" ")}>
+                                    <div className="sd-cal-task-header">
+                                      <input
+                                        type="checkbox"
+                                        className="sd-cal-task-checkbox"
+                                        checked={task.completed}
+                                        onChange={() => toggleScheduleTask(task.id)}
+                                        aria-label={(task.completed ? "Mark incomplete: " : "Complete: ") + task.title}
+                                      />
+                                      <button
+                                        type="button"
+                                        className="sd-cal-task-open"
+                                        onClick={() => setSelectedScheduleTask(task)}
+                                        title={`Open assignment: ${task.title}`}
+                                      >
+                                        <span className="sd-cal-task-type">{task.action.replaceAll("-", " ")}</span>{task.title}
+                                      </button>
+                                      <button type="button" className="sd-cal-task-remove" onClick={() => removeScheduleTask(task.id)} aria-label={"Remove " + task.title} title="Remove assignment">
+                                        <X size={12} />
+                                      </button>
+                                    </div>
+                                    <div className="sd-cal-task-meta">
+                                      <span>{formatScheduleDuration(task.durationMinutes)}</span>
+                                      <button
+                                        type="button"
+                                        className="sd-cal-task-quick-start"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          openScheduleTask(task);
+                                        }}
+                                        title="Open and start this assignment question directly"
+                                        style={{
+                                          border: "none",
+                                          background: "transparent",
+                                          color: "#4f46e5",
+                                          cursor: "pointer",
+                                          fontSize: "11px",
+                                          fontWeight: 700,
+                                          display: "inline-flex",
+                                          alignItems: "center",
+                                          gap: "3px",
+                                          padding: "2px 6px",
+                                          borderRadius: "4px"
+                                        }}
+                                      >
+                                        <Play size={10} fill="currentColor" /> Start
+                                      </button>
+                                    </div>
+                                  </article>
+                                ))}
+                                {tasks.length === 0 && !outsidePlan && <span className="sd-cal-empty-day">No assignments scheduled</span>}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          </section>
 
-          {/* Section: Resources */}
-          <section className="sd-section" aria-labelledby="resources-heading">
-            <h2 id="resources-heading" className="sd-section-title">
-              Resources
-            </h2>
-            <div className="sd-card-stack">
-              {resourceItems.map((res) => {
-                const Icon = res.icon;
-                return (
-                  <div
-                    key={res.name}
-                    className="sd-stack-row"
-                    onClick={() => {
-                      if (res.name.includes("Crash Course")) {
-                        setActiveTab("crash-course");
-                      } else if (res.name.includes("Cheat Sheets")) {
-                        setActiveTab("cheat-sheets");
-                      } else if (res.name.includes("Strategy Course")) {
-                        setActiveTab("strategy-course");
-                      } else {
-                        setIsUpgradeModalOpen(true);
-                      }
-                    }}
-                    style={{ cursor: "pointer" }}
-                  >
-                    <div className="sd-stack-left">
-                      <div
-                        className="sd-sub-icon-badge"
-                        style={{ backgroundColor: res.iconBg, color: res.iconColor }}
-                      >
-                        <Icon size={18} />
+                  <div className="sd-cal-footer">
+                    <span className="sd-cal-footer-summary">
+                      {scheduleSummary.averageHoursPerDay > 0
+                        ? "About " + scheduleSummary.averageHoursPerDay + " study hours per day"
+                        : "All assignments are complete"}
+                    </span>
+                    <button type="button" className="sd-cal-view-all-link" onClick={() => { setScheduleFilter("all"); setScheduleView("month"); }}>
+                      View full schedule
+                    </button>
+                  </div>
+
+                  {scheduleToastMessage && (
+                    <div className="sd-schedule-toast" role="status">
+                      <span>{scheduleToastMessage}</span>
+                      {scheduleUndoSnapshot && <button type="button" onClick={undoScheduleChange}>Undo</button>}
+                      <button type="button" className="sd-schedule-toast-close" onClick={() => { setScheduleToastMessage(null); setScheduleUndoSnapshot(null); }} aria-label="Dismiss schedule message">
+                        <X size={14} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="sd-schedule-card">
+                  <div className="sd-schedule-graphic">
+                    <div className="sd-cal-art">
+                      <CalendarDays size={42} className="sd-cal-icon" />
+                      <Clock size={18} className="sd-cal-badge-clock" />
+                      <Check size={14} className="sd-cal-badge-check" />
+                    </div>
+                  </div>
+                  <h3 className="sd-schedule-headline">Create Your Personalized NCLEX® Study Schedule</h3>
+                  <p>Set your exam date, choose a weekly day off, and we’ll spread your assignments across the remaining study days.</p>
+                  <button type="button" className="sd-btn-schedule" onClick={() => openScheduleDialog("create")}>
+                    <Calendar size={17} />
+                    <span>Create Study Schedule</span>
+                  </button>
+                </div>
+              )}
+            </section>
+
+            {/* Section: Study by Subject */}
+            <section className="sd-section" aria-labelledby="subjects-heading">
+              <h2 id="subjects-heading" className="sd-section-title">
+                Study by Subject
+              </h2>
+              <div className="sd-subjects-list">
+                {filteredSubjects.map((sub) => {
+                  const IconComponent = sub.icon;
+                  return (
+                    <div
+                      key={sub.id}
+                      className="sd-subject-row"
+                      onClick={() => {
+                        setSelectedSubjectId(sub.id);
+                        setSubjectSubTab(
+                          sub.id === "fundamentals" || sub.id === "management-of-care"
+                            ? "standalone"
+                            : "case-studies"
+                        );
+                        setActiveTab("subject");
+                      }}
+                      style={{ cursor: "pointer" }}
+                    >
+                      {/* Left: Icon & Subject Title */}
+                      <div className="sd-sub-info">
+                        <div
+                          className="sd-sub-icon-badge"
+                          style={{ backgroundColor: sub.iconBg, color: sub.iconColor }}
+                        >
+                          <IconComponent size={18} />
+                        </div>
+                        <div className="sd-sub-titles">
+                          <strong className="sd-sub-name">{sub.name}</strong>
+                          <span className="sd-sub-stat">
+                            {sub.questionsUsed} of {sub.questionsTotal} questions used
+                          </span>
+                        </div>
                       </div>
-                      <div className="sd-sub-titles">
-                        <strong className="sd-sub-name">{res.name}</strong>
-                        <span className="sd-sub-stat">{res.subtitle}</span>
+
+                      {/* Center: Progress Bar & Lessons */}
+                      <div className="sd-sub-progress-col">
+                        <div className="sd-prog-bar">
+                          <div
+                            className="sd-prog-fill"
+                            style={{
+                              width: `${(sub.questionsUsed / sub.questionsTotal) * 100}%`
+                            }}
+                          />
+                        </div>
+                        <span className="sd-prog-stat">
+                          {sub.lessonsCompleted} of {sub.lessonsTotal} lessons completed
+                        </span>
+                      </div>
+
+                      {/* Right: Content Experts & Chevron */}
+                      <div className="sd-sub-experts-col">
+                        <div className="sd-avatars-pair">
+                          <span
+                            className="sd-pair-avatar"
+                            style={{ backgroundColor: sub.expert1.bg }}
+                            title={sub.expert1.name}
+                          >
+                            {sub.expert1.image ? (
+                              <img
+                                src={sub.expert1.image}
+                                alt={sub.expert1.name}
+                                className="sd-pair-avatar-img"
+                              />
+                            ) : (
+                              sub.expert1.initials
+                            )}
+                          </span>
+                          <span
+                            className="sd-pair-avatar sd-pair-avatar-overlap"
+                            style={{ backgroundColor: sub.expert2.bg }}
+                            title={sub.expert2.name}
+                          >
+                            {sub.expert2.image ? (
+                              <img
+                                src={sub.expert2.image}
+                                alt={sub.expert2.name}
+                                className="sd-pair-avatar-img"
+                              />
+                            ) : (
+                              sub.expert2.initials
+                            )}
+                          </span>
+                        </div>
+                        <div className="sd-experts-text">
+                          <small>CONTENT EXPERTS</small>
+                          <strong>{sub.experts}</strong>
+                        </div>
+                        <ChevronRight size={17} className="sd-sub-chevron" />
                       </div>
                     </div>
+                  );
+                })}
+              </div>
+            </section>
 
-                    <div className="sd-stack-right">
-                      {res.hasProgress && (
+            {/* Section: Study by Question Type */}
+            <section className="sd-section" aria-labelledby="qtypes-heading">
+              <h2 id="qtypes-heading" className="sd-section-title">
+                Study by Question Type
+              </h2>
+              <div className="sd-card-stack">
+                {questionTypes.map((q) => {
+                  const Icon = q.icon;
+                  return (
+                    <div
+                      key={q.name}
+                      className="sd-stack-row"
+                      onClick={() => {
+                        if (q.name.includes("Case Studies")) {
+                          setActiveTab("case-studies");
+                        } else if (q.name.includes("CAT")) {
+                          setActiveTab("cat-exams");
+                        } else {
+                          setActiveTab("standalone");
+                        }
+                      }}
+                      style={{ cursor: "pointer" }}
+                    >
+                      <div className="sd-stack-left">
+                        <div
+                          className="sd-sub-icon-badge"
+                          style={{ backgroundColor: q.iconBg, color: q.iconColor }}
+                        >
+                          <Icon size={18} />
+                        </div>
+                        <div className="sd-sub-titles">
+                          <strong className="sd-sub-name">{q.name}</strong>
+                          <span className="sd-sub-stat">{q.subtitle}</span>
+                        </div>
+                      </div>
+
+                      <div className="sd-stack-right">
                         <div className="sd-prog-bar sd-prog-bar-wide">
                           <div className="sd-prog-fill" style={{ width: "0%" }} />
                         </div>
-                      )}
-                      <ChevronRight size={17} className="sd-stack-chevron" />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-
-          {/* Section: FAQs */}
-          <section className="sd-section sd-faqs-section" aria-labelledby="faqs-heading">
-            <h2 id="faqs-heading" className="sd-section-title">
-              FAQs
-            </h2>
-            <div className="sd-faqs-list">
-              {faqsList.map((faq, index) => {
-                const isOpen = openFaqIndex === index;
-                return (
-                  <div key={faq.question} className="sd-faq-item">
-                    <button
-                      type="button"
-                      className="sd-faq-question-btn"
-                      onClick={() => setOpenFaqIndex(isOpen ? null : index)}
-                      aria-expanded={isOpen}
-                    >
-                      <span>{faq.question}</span>
-                      <span className="sd-faq-toggle-icon">
-                        {isOpen ? <Minus size={16} /> : <Plus size={16} />}
-                      </span>
-                    </button>
-                    {isOpen && (
-                      <div className="sd-faq-answer">
-                        <p>{faq.answer}</p>
+                        <ChevronRight size={17} className="sd-stack-chevron" />
                       </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        </div>
-      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+
+            {/* Section: Resources */}
+            <section className="sd-section" aria-labelledby="resources-heading">
+              <h2 id="resources-heading" className="sd-section-title">
+                Resources
+              </h2>
+              <div className="sd-card-stack">
+                {resourceItems.map((res) => {
+                  const Icon = res.icon;
+                  return (
+                    <div
+                      key={res.name}
+                      className="sd-stack-row"
+                      onClick={() => {
+                        if (res.name.includes("Crash Course")) {
+                          setActiveTab("crash-course");
+                        } else if (res.name.includes("Cheat Sheets")) {
+                          setActiveTab("cheat-sheets");
+                        } else if (res.name.includes("Strategy Course")) {
+                          setActiveTab("strategy-course");
+                        } else {
+                          setIsUpgradeModalOpen(true);
+                        }
+                      }}
+                      style={{ cursor: "pointer" }}
+                    >
+                      <div className="sd-stack-left">
+                        <div
+                          className="sd-sub-icon-badge"
+                          style={{ backgroundColor: res.iconBg, color: res.iconColor }}
+                        >
+                          <Icon size={18} />
+                        </div>
+                        <div className="sd-sub-titles">
+                          <strong className="sd-sub-name">{res.name}</strong>
+                          <span className="sd-sub-stat">{res.subtitle}</span>
+                        </div>
+                      </div>
+
+                      <div className="sd-stack-right">
+                        {res.hasProgress && (
+                          <div className="sd-prog-bar sd-prog-bar-wide">
+                            <div className="sd-prog-fill" style={{ width: "0%" }} />
+                          </div>
+                        )}
+                        <ChevronRight size={17} className="sd-stack-chevron" />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+
+            {/* Section: FAQs */}
+            <section className="sd-section sd-faqs-section" aria-labelledby="faqs-heading">
+              <h2 id="faqs-heading" className="sd-section-title">
+                FAQs
+              </h2>
+              <div className="sd-faqs-list">
+                {faqsList.map((faq, index) => {
+                  const isOpen = openFaqIndex === index;
+                  return (
+                    <div key={faq.question} className="sd-faq-item">
+                      <button
+                        type="button"
+                        className="sd-faq-question-btn"
+                        onClick={() => setOpenFaqIndex(isOpen ? null : index)}
+                        aria-expanded={isOpen}
+                      >
+                        <span>{faq.question}</span>
+                        <span className="sd-faq-toggle-icon">
+                          {isOpen ? <Minus size={16} /> : <Plus size={16} />}
+                        </span>
+                      </button>
+                      {isOpen && (
+                        <div className="sd-faq-answer">
+                          <p>{faq.answer}</p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          </div>
+        )}
       </main>
 
       {/* Modal: Create Test (matching exact reference screenshot) */}
@@ -9135,11 +10250,11 @@ const StudentDashboard = (): ReactElement => {
                 </div>
                 <div className="sd-pools-row">
                   {[
-                    { id: "unused", label: "Unused", count: availableTestQuestions.length },
-                    { id: "learning", label: "Learning", count: 0 },
-                    { id: "reviewing", label: "Reviewing", count: 0 },
-                    { id: "mastered", label: "Mastered", count: 0 },
-                    { id: "bookmarked", label: "Bookmarked", count: 0 }
+                    { id: "unused", label: "Unused", count: testOptions?.pools.unused ?? 0 },
+                    { id: "learning", label: "Learning", count: testOptions?.pools.learning ?? 0 },
+                    { id: "reviewing", label: "Reviewing", count: testOptions?.pools.reviewing ?? 0 },
+                    { id: "mastered", label: "Mastered", count: testOptions?.pools.mastered ?? 0 },
+                    { id: "bookmarked", label: "Bookmarked", count: testOptions?.pools.bookmarked ?? 0 }
                   ].map((pool) => {
                     const isChecked = questionPools[pool.id] ?? false;
                     return (
@@ -9169,8 +10284,8 @@ const StudentDashboard = (): ReactElement => {
                   <label className="sd-subjects-select-all">
                     <input
                       type="checkbox"
-                      checked={isAllSubjectsSelected}
-                      onChange={() => setIsAllSubjectsSelected(!isAllSubjectsSelected)}
+                      checked={Boolean(testOptions?.subjects.length) && testOptions?.subjects.every((subject) => selectedTestSubjectIds.includes(subject.id))}
+                      onChange={selectAllTestSubjects}
                     />
                     <span>Subjects</span>
                   </label>
@@ -9213,13 +10328,13 @@ const StudentDashboard = (): ReactElement => {
                         <label className="sd-subj-check-label">
                           <input
                             type="checkbox"
-                            checked={isFreeQuestionsChecked}
-                            onChange={() => setIsFreeQuestionsChecked(!isFreeQuestionsChecked)}
+                            checked={selectedTestSubjectIds.includes("free")}
+                            onChange={() => toggleTestSubject("free")}
                           />
                           <span>Free Questions</span>
                         </label>
                         <div className="sd-subj-item-meta">
-                          <span className="sd-subj-badge">36</span>
+                          <span className="sd-subj-badge">{getTestSubjectCount("free")}</span>
                           <button
                             type="button"
                             className="sd-subj-chevron-btn"
@@ -9230,9 +10345,8 @@ const StudentDashboard = (): ReactElement => {
                           >
                             <ChevronDown
                               size={14}
-                              className={`sd-chevron-rotatable ${
-                                isFreeQuestionsDropdownOpen ? "sd-chevron-rotated" : ""
-                              }`}
+                              className={`sd-chevron-rotatable ${isFreeQuestionsDropdownOpen ? "sd-chevron-rotated" : ""
+                                }`}
                             />
                           </button>
                         </div>
@@ -9244,14 +10358,12 @@ const StudentDashboard = (): ReactElement => {
                           <label className="sd-subj-check-label sd-nested-label">
                             <input
                               type="checkbox"
-                              checked={isFreeQuestionsSubChecked}
-                              onChange={() =>
-                                setIsFreeQuestionsSubChecked(!isFreeQuestionsSubChecked)
-                              }
+                              checked={selectedTestSubjectIds.includes("free")}
+                              onChange={() => toggleTestSubject("free")}
                             />
                             <span>Free Questions</span>
                           </label>
-                          <span className="sd-subj-badge">36</span>
+                          <span className="sd-subj-badge">{getTestSubjectCount("free")}</span>
                         </div>
                       )}
                     </div>
@@ -9263,97 +10375,76 @@ const StudentDashboard = (): ReactElement => {
                         <span>Case Studies</span>
                       </div>
                       <div className="sd-subj-item-meta">
-                        <span className="sd-subj-badge">300</span>
+                        <span className="sd-subj-badge">0</span>
                         <ChevronRight size={14} className="sd-chevron-grey" />
                       </div>
                     </div>
 
                     {/* Adult Health */}
-                    <div className="sd-subj-item-row sd-subj-item-locked">
-                      <div className="sd-subj-locked-label">
-                        <Shield size={14} className="sd-shield-icon" />
-                        <span>Adult Health</span>
-                      </div>
+                    <label className="sd-subj-item-row">
+                      <span className="sd-subj-check-label"><input type="checkbox" checked={selectedTestSubjectIds.includes("adult-health")} disabled={getTestSubjectCount("adult-health") === 0} onChange={() => toggleTestSubject("adult-health")} /><span>Adult Health</span></span>
                       <div className="sd-subj-item-meta">
-                        <span className="sd-subj-badge">407</span>
+                        <span className="sd-subj-badge">{getTestSubjectCount("adult-health")}</span>
                         <ChevronRight size={14} className="sd-chevron-grey" />
                       </div>
-                    </div>
+                    </label>
 
                     {/* Child Health */}
-                    <div className="sd-subj-item-row sd-subj-item-locked">
-                      <div className="sd-subj-locked-label">
-                        <Shield size={14} className="sd-shield-icon" />
-                        <span>Child Health</span>
-                      </div>
+                    <label className="sd-subj-item-row">
+                      <span className="sd-subj-check-label"><input type="checkbox" checked={selectedTestSubjectIds.includes("child-health")} disabled={getTestSubjectCount("child-health") === 0} onChange={() => toggleTestSubject("child-health")} /><span>Child Health</span></span>
                       <div className="sd-subj-item-meta">
-                        <span className="sd-subj-badge">145</span>
+                        <span className="sd-subj-badge">{getTestSubjectCount("child-health")}</span>
                         <ChevronRight size={14} className="sd-chevron-grey" />
                       </div>
-                    </div>
+                    </label>
 
                     {/* Fundamentals */}
-                    <div className="sd-subj-item-row sd-subj-item-locked">
-                      <div className="sd-subj-locked-label">
-                        <Shield size={14} className="sd-shield-icon" />
-                        <span>Fundamentals</span>
-                      </div>
+                    <label className="sd-subj-item-row">
+                      <span className="sd-subj-check-label"><input type="checkbox" checked={selectedTestSubjectIds.includes("fundamentals")} disabled={getTestSubjectCount("fundamentals") === 0} onChange={() => toggleTestSubject("fundamentals")} /><span>Fundamentals</span></span>
                       <div className="sd-subj-item-meta">
-                        <span className="sd-subj-badge">155</span>
+                        <span className="sd-subj-badge">{getTestSubjectCount("fundamentals")}</span>
                         <ChevronRight size={14} className="sd-chevron-grey" />
                       </div>
-                    </div>
+                    </label>
                   </div>
 
                   {/* Right Column */}
                   <div className="sd-test-subj-col">
                     {/* Maternal & Newborn Health */}
-                    <div className="sd-subj-item-row sd-subj-item-locked">
-                      <div className="sd-subj-locked-label">
-                        <Shield size={14} className="sd-shield-icon" />
-                        <span>Maternal &amp; Newborn Health</span>
-                      </div>
+                    <label className="sd-subj-item-row">
+                      <span className="sd-subj-check-label"><input type="checkbox" checked={selectedTestSubjectIds.includes("maternal-newborn")} disabled={getTestSubjectCount("maternal-newborn") === 0} onChange={() => toggleTestSubject("maternal-newborn")} /><span>Maternal &amp; Newborn Health</span></span>
                       <div className="sd-subj-item-meta">
-                        <span className="sd-subj-badge">141</span>
+                        <span className="sd-subj-badge">{getTestSubjectCount("maternal-newborn")}</span>
                         <ChevronRight size={14} className="sd-chevron-grey" />
                       </div>
-                    </div>
+                    </label>
 
                     {/* Mental Health */}
-                    <div className="sd-subj-item-row sd-subj-item-locked">
-                      <div className="sd-subj-locked-label">
-                        <Shield size={14} className="sd-shield-icon" />
-                        <span>Mental Health</span>
-                      </div>
+                    <label className="sd-subj-item-row">
+                      <span className="sd-subj-check-label"><input type="checkbox" checked={selectedTestSubjectIds.includes("mental-health")} disabled={getTestSubjectCount("mental-health") === 0} onChange={() => toggleTestSubject("mental-health")} /><span>Mental Health</span></span>
                       <div className="sd-subj-item-meta">
-                        <span className="sd-subj-badge">104</span>
+                        <span className="sd-subj-badge">{getTestSubjectCount("mental-health")}</span>
                         <ChevronRight size={14} className="sd-chevron-grey" />
                       </div>
-                    </div>
+                    </label>
 
                     {/* Pharmacology */}
-                    <div className="sd-subj-item-row sd-subj-item-locked">
-                      <div className="sd-subj-locked-label">
-                        <Shield size={14} className="sd-shield-icon" />
-                        <span>Pharmacology</span>
-                      </div>
+                    <label className="sd-subj-item-row">
+                      <span className="sd-subj-check-label"><input type="checkbox" checked={selectedTestSubjectIds.includes("pharmacology")} disabled={getTestSubjectCount("pharmacology") === 0} onChange={() => toggleTestSubject("pharmacology")} /><span>Pharmacology</span></span>
                       <div className="sd-subj-item-meta">
-                        <span className="sd-subj-badge">183</span>
+                        <span className="sd-subj-badge">{getTestSubjectCount("pharmacology")}</span>
                         <ChevronRight size={14} className="sd-chevron-grey" />
                       </div>
-                    </div>
+                    </label>
 
                     {/* Management of Care */}
-                    <div className="sd-subj-item-row sd-subj-item-locked">
-                      <div className="sd-subj-locked-label">
-                        <Shield size={14} className="sd-shield-icon" />
-                        <span>Management of Care</span>
-                      </div>
+                    <label className="sd-subj-item-row">
+                      <span className="sd-subj-check-label"><input type="checkbox" checked={selectedTestSubjectIds.includes("management-of-care")} disabled={getTestSubjectCount("management-of-care") === 0} onChange={() => toggleTestSubject("management-of-care")} /><span>Management of Care</span></span>
                       <div className="sd-subj-item-meta">
-                        <span className="sd-subj-badge">145</span>
+                        <span className="sd-subj-badge">{getTestSubjectCount("management-of-care")}</span>
                         <ChevronRight size={14} className="sd-chevron-grey" />
                       </div>
-                    </div>
+                    </label>
                   </div>
                 </div>
               </div>
@@ -9369,7 +10460,18 @@ const StudentDashboard = (): ReactElement => {
 
                 <div className="sd-questions-input-row">
                   <div className="sd-stepper-box">
-                    <span className="sd-stepper-val">{testQuestionCount}</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={150}
+                      value={testQuestionCount}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        if (!isNaN(val)) setTestQuestionCount(Math.max(1, Math.min(150, val)));
+                      }}
+                      className="sd-stepper-val"
+                      style={{ width: "48px", border: "none", background: "transparent", fontWeight: 700, fontSize: "15px", textAlign: "center", outline: "none" }}
+                    />
                     <div className="sd-stepper-arrows">
                       <button
                         type="button"
@@ -9396,16 +10498,41 @@ const StudentDashboard = (): ReactElement => {
                     type="range"
                     min="1"
                     max="150"
-                    value={testQuestionCount}
+                    value={Math.min(150, Math.max(1, testQuestionCount))}
                     onChange={(e) => setTestQuestionCount(Number(e.target.value))}
                     className="sd-test-slider"
                   />
                 </div>
 
-                <div className="sd-time-estimate-text">
-                  This test should take about {Math.round(testQuestionCount * 1.5)}min to complete.
+                {/* Quick Presets for Custom Test Size */}
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "10px", alignItems: "center" }}>
+                  <span style={{ fontSize: "11px", fontWeight: 600, color: "#71717a" }}>Quick select:</span>
+                  {[10, 25, 50, 75, 85, 100, 150].map((count) => (
+                    <button
+                      key={count}
+                      type="button"
+                      onClick={() => setTestQuestionCount(count)}
+                      style={{
+                        padding: "3px 9px",
+                        borderRadius: "6px",
+                        fontSize: "12px",
+                        fontWeight: testQuestionCount === count ? 700 : 500,
+                        backgroundColor: testQuestionCount === count ? "#6557e8" : "#f1f0fb",
+                        color: testQuestionCount === count ? "#ffffff" : "#4b448a",
+                        border: testQuestionCount === count ? "1px solid #6557e8" : "1px solid #e2e0f4",
+                        cursor: "pointer",
+                        transition: "all 0.15s ease"
+                      }}
+                    >
+                      {count === 85 ? "85 (NCLEX CAT)" : count === 150 ? "150 (Max)" : `${count}`}
+                    </button>
+                  ))}
                 </div>
-                {testCreationNotice && (
+
+                <div className="sd-time-estimate-text">
+                  This test should take about {Math.floor(testQuestionCount * 1.5 / 60) > 0 ? `${Math.floor(testQuestionCount * 1.5 / 60)}hr ${Math.round(testQuestionCount * 1.5 % 60)}min` : `${Math.round(testQuestionCount * 1.5)}min`} to complete.
+                </div>
+                {testCreationNotice && !testCreationNotice.toLowerCase().includes("mongodb") && (
                   <p role="status" style={{ margin: "8px 0 0", color: "#9a3412", fontSize: "12px" }}>
                     {testCreationNotice}
                   </p>
@@ -9416,654 +10543,27 @@ const StudentDashboard = (): ReactElement => {
               <button
                 type="button"
                 className="sd-btn-start-test"
+                disabled={isLoadingTestOptions || isCreatingTest}
                 onClick={(e) => {
                   e.stopPropagation();
-                  createConfiguredTest();
+                  void createConfiguredTest();
                 }}
               >
-                Create Test
+                {isCreatingTest ? <><RotateCcw size={15} className="sd-spin-icon" /> Creating Test...</> : "Start Test"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal: Upgrade Membership (Matches exact reference screenshot) */}
+      {/* Modal: Schedule Assignment */}
+      {renderScheduleAssignmentModal()}
+
+      {/* Modal: Upgrade Membership */}
       {renderUpgradeModal()}
+
+      {/* Modal: Paywall / Pro Upgrade */}
       {renderPaywallModal()}
-
-      {/* Payment Success Toast */}
-      {paywallSuccessNotice && (
-        <aside
-          role="status"
-          aria-live="polite"
-          style={{
-            position: "fixed",
-            bottom: 28,
-            right: 28,
-            zIndex: 99999,
-            backgroundColor: "#065f46",
-            color: "#ffffff",
-            padding: "16px 24px",
-            borderRadius: "14px",
-            boxShadow: "0 18px 45px rgba(0,0,0,0.35)",
-            border: "1px solid #34d399",
-            fontSize: "14px",
-            fontWeight: 700,
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            animation: "fadeIn 0.2s ease"
-          }}
-        >
-          <Sparkles size={18} color="#fef08a" />
-          <span>{paywallSuccessNotice}</span>
-          <button
-            onClick={() => setPaywallSuccessNotice(null)}
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "#fff",
-              cursor: "pointer",
-              marginLeft: "12px",
-              fontSize: "16px"
-            }}
-          >
-            ✕
-          </button>
-        </aside>
-      )}
-
-      {/* Modal: Create Study Schedule (Exact match to reference design) */}
-      {isScheduleModalOpen && (
-        <div className="sd-modal-overlay" onClick={() => setIsScheduleModalOpen(false)}>
-          <div
-            className="sd-schedule-modal"
-            onClick={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="modal-schedule-title"
-          >
-            {/* Modal Header */}
-            <div className="sd-sched-header">
-              <h2 id="modal-schedule-title" className="sd-sched-title">
-                Create Study Schedule
-              </h2>
-              <button
-                type="button"
-                className="sd-test-modal-close"
-                onClick={() => setIsScheduleModalOpen(false)}
-                aria-label="Close dialog"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Modal 2-Column Body */}
-            <div className="sd-sched-body">
-              {/* Left Column: Form Controls */}
-              <div className="sd-sched-left-col">
-                {/* 1. Start Date */}
-                <div className="sd-sched-field-group">
-                  <div className="sd-sched-field-header">
-                    <Rocket size={15} className="sd-sched-field-icon" />
-                    <span className="sd-sched-field-title">Start Date</span>
-                  </div>
-                  <p className="sd-sched-field-desc">Your study schedule will begin on this date.</p>
-                  <div className="sd-sched-input-wrap">
-                    <span className="sd-sched-date-text">{formatDisplayDate(scheduleStartDate)}</span>
-                    <input
-                      type="date"
-                      value={scheduleStartDate}
-                      onChange={(e) => setScheduleStartDate(e.target.value)}
-                      className="sd-sched-date-hidden-input"
-                      title="Choose start date"
-                    />
-                    <Calendar size={16} className="sd-sched-cal-icon" />
-                  </div>
-                </div>
-
-                {/* 2. Exam Date */}
-                <div className="sd-sched-field-group">
-                  <div className="sd-sched-field-header">
-                    <Target size={15} className="sd-sched-field-icon" />
-                    <span className="sd-sched-field-title">Exam Date</span>
-                  </div>
-                  <p className="sd-sched-field-desc">Your exam date can be updated anytime.</p>
-                  <div className={`sd-sched-input-wrap ${noExamDateYet ? "sd-sched-input-disabled" : ""}`}>
-                    <span className={scheduleExamDate && !noExamDateYet ? "sd-sched-date-text" : "sd-sched-placeholder"}>
-                      {noExamDateYet ? "No date set" : formatDisplayDate(scheduleExamDate)}
-                    </span>
-                    <input
-                      type="date"
-                      value={scheduleExamDate}
-                      disabled={noExamDateYet}
-                      onChange={(e) => {
-                        setScheduleExamDate(e.target.value);
-                        if (noExamDateYet) setNoExamDateYet(false);
-                      }}
-                      className="sd-sched-date-hidden-input"
-                      title="Choose exam date"
-                    />
-                    <Calendar size={16} className="sd-sched-cal-icon" />
-                  </div>
-
-                  <label className="sd-sched-checkbox-row">
-                    <input
-                      type="checkbox"
-                      checked={noExamDateYet}
-                      onChange={(e) => {
-                        setNoExamDateYet(e.target.checked);
-                        if (e.target.checked) setScheduleExamDate("");
-                      }}
-                      className="sd-sched-checkbox"
-                    />
-                    <span>I don&apos;t have an exam date yet.</span>
-                  </label>
-                </div>
-
-                {/* 3. Days Off */}
-                <div className="sd-sched-field-group">
-                  <div className="sd-sched-field-header">
-                    <Sun size={15} className="sd-sched-field-icon" />
-                    <span className="sd-sched-field-title">Days Off</span>
-                  </div>
-                  <p className="sd-sched-field-desc">We recommend taking one day off per week.</p>
-                  <div className="sd-sched-dropdown-wrap">
-                    <button
-                      type="button"
-                      className="sd-sched-select-btn"
-                      onClick={() => setIsDaysOffDropdownOpen(!isDaysOffDropdownOpen)}
-                    >
-                      <span>{selectedDaysOff || "Select days off"}</span>
-                      <ChevronDown size={14} className="sd-sched-chevron" />
-                    </button>
-                    {isDaysOffDropdownOpen && (
-                      <div className="sd-sched-dropdown-menu">
-                        {["Sunday", "Saturday", "Friday", "Monday", "None (7 days/week)"].map((day) => (
-                          <button
-                            key={day}
-                            type="button"
-                            className={`sd-sched-dropdown-item ${selectedDaysOff === day ? "sd-sched-item-selected" : ""}`}
-                            onClick={() => {
-                              setSelectedDaysOff(day);
-                              setIsDaysOffDropdownOpen(false);
-                            }}
-                          >
-                            <span>{day}</span>
-                            {selectedDaysOff === day && <Check size={14} className="sd-sched-item-check" />}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Right Column: Timeline & Action */}
-              <div className="sd-sched-right-col">
-                <h3 className="sd-sched-right-title">Your Schedule</h3>
-
-                <div className="sd-sched-timeline-card">
-                  {/* Start Date Node */}
-                  <div className="sd-sched-node">
-                    <div className="sd-sched-node-badge">
-                      <Rocket size={16} />
-                    </div>
-                    <div className="sd-sched-node-text">
-                      <strong className="sd-sched-node-date">{formatDisplayDate(scheduleStartDate)}</strong>
-                      <span className="sd-sched-node-label">Start Date</span>
-                    </div>
-                  </div>
-
-                  {/* Vertical Dotted Connector Line */}
-                  <div className="sd-sched-connector-wrap">
-                    <div className="sd-sched-dotted-line" />
-                    <div className="sd-sched-middle-card">
-                      {scheduleExamDate ? (
-                        <span>
-                          <strong>{calculateScheduleWeeks(scheduleStartDate, scheduleExamDate)} weeks</strong> of focused preparation. Covers all 3,500+ questions &amp; 284 video lessons.
-                        </span>
-                      ) : noExamDateYet ? (
-                        <span>
-                          Self-paced flexible schedule. Aim for ~30 questions daily with {selectedDaysOff} off.
-                        </span>
-                      ) : (
-                        <span>
-                          Choose an exam date to see your Study Schedule timeline.
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Exam Date Node */}
-                  <div className="sd-sched-node">
-                    <div className="sd-sched-node-badge">
-                      <Target size={16} />
-                    </div>
-                    <div className="sd-sched-node-text">
-                      <strong className="sd-sched-node-date">
-                        {noExamDateYet ? "Open-Ended" : formatDisplayDate(scheduleExamDate)}
-                      </strong>
-                      <span className="sd-sched-node-label">Exam Date</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Bottom Action Area */}
-                <div className="sd-sched-cta-area">
-                  <button
-                    type="button"
-                    className={`sd-btn-create-schedule ${
-                      scheduleExamDate || noExamDateYet
-                        ? "sd-btn-create-schedule-active"
-                        : "sd-btn-create-schedule-disabled"
-                    }`}
-                    onClick={() => {
-                      setHasActiveSchedule(true);
-                      setIsScheduleModalOpen(false);
-                    }}
-                  >
-                    <span>Create Study Schedule</span>
-                    <ArrowRight size={15} />
-                  </button>
-                  <p className="sd-sched-cta-caption">You can adjust your schedule anytime</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* Modal: Reset Performance Data */}
-      {isResetModalOpen && (
-        <div className="sd-modal-overlay" onClick={() => setIsResetModalOpen(false)}>
-          <div
-            className="sd-reset-modal"
-            onClick={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="reset-modal-title"
-          >
-            <div className="sd-reset-modal-header">
-              <h3 id="reset-modal-title" className="sd-reset-modal-title">Reset Performance Data?</h3>
-              <button
-                type="button"
-                className="sd-test-modal-close"
-                onClick={() => setIsResetModalOpen(false)}
-                aria-label="Close dialog"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <div className="sd-reset-modal-body">
-              <p>
-                Are you sure you want to reset your score, time management, and question attempt history? All questions will be returned to the <strong>Unused</strong> question pool.
-              </p>
-              <div className="sd-reset-modal-actions">
-                <button
-                  type="button"
-                  className="sd-btn-secondary"
-                  onClick={() => setIsResetModalOpen(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="sd-btn-reset-confirm"
-                  onClick={() => {
-                    alert("Performance data has been reset to 0% and all questions moved back to Unused!");
-                    setIsResetModalOpen(false);
-                  }}
-                >
-                  Confirm Reset
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Interactive Standalone Practice Modal */}
-      {practicingQuestion && (
-        <div
-          className="sd-modal-overlay"
-          style={{
-            position: "fixed",
-            inset: 0,
-            backgroundColor: "rgba(15, 23, 42, 0.75)",
-            zIndex: 99999,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "20px"
-          }}
-          onClick={() => {
-            setPracticingQuestion(null);
-            setPracticingSelectedOption(null);
-            setPracticingIsSubmitted(false);
-          }}
-        >
-          <div
-            className="sd-modal-card"
-            style={{
-              backgroundColor: "#ffffff",
-              borderRadius: "14px",
-              width: "100%",
-              maxWidth: "680px",
-              maxHeight: "90vh",
-              overflowY: "auto",
-              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.35)",
-              border: "1px solid #e2e8f0"
-            }}
-            onClick={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-          >
-            {/* Blue NCLEX-RN Top Header */}
-            <div
-              style={{
-                backgroundColor: "#2e3b52",
-                color: "#ffffff",
-                padding: "16px 20px",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                borderTopLeftRadius: "14px",
-                borderTopRightRadius: "14px"
-              }}
-            >
-              <div>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <span
-                    style={{
-                      backgroundColor: "#3b82f6",
-                      color: "#ffffff",
-                      fontSize: "10.5px",
-                      fontWeight: 700,
-                      padding: "2px 8px",
-                      borderRadius: "10px",
-                      textTransform: "uppercase"
-                    }}
-                  >
-                    {practicingQuestion.subjectName}
-                  </span>
-                  <span style={{ fontSize: "11px", color: "#94a3b8" }}>
-                    Next Gen NCLEX Standalone
-                  </span>
-                </div>
-                <h3 style={{ fontSize: "16px", fontWeight: 700, margin: "4px 0 0", color: "#ffffff" }}>
-                  {practicingQuestion.title}
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setPracticingQuestion(null);
-                  setPracticingSelectedOption(null);
-                  setPracticingIsSubmitted(false);
-                }}
-                style={{
-                  background: "rgba(255, 255, 255, 0.1)",
-                  border: "none",
-                  borderRadius: "50%",
-                  width: "32px",
-                  height: "32px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "#ffffff",
-                  cursor: "pointer"
-                }}
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Question Body */}
-            <div style={{ padding: "22px 24px" }}>
-              <div
-                style={{
-                  fontSize: "14px",
-                  color: "#1e293b",
-                  lineHeight: "1.65",
-                  marginBottom: "20px",
-                  fontWeight: 500
-                }}
-              >
-                {practicingQuestion.stem}
-              </div>
-
-              {/* Options Stack */}
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "20px" }}>
-                {practicingQuestion.options.map((opt, idx) => {
-                  const isSelected = practicingSelectedOption === idx;
-                  const isCorrect = idx === practicingQuestion.correctIndex;
-                  let borderColor = "#cbd5e1";
-                  let bg = "#ffffff";
-                  let textColor = "#1e293b";
-
-                  if (practicingIsSubmitted) {
-                    if (isCorrect) {
-                      borderColor = "#10b981";
-                      bg = "#ecfdf5";
-                      textColor = "#065f46";
-                    } else if (isSelected && !isCorrect) {
-                      borderColor = "#ef4444";
-                      bg = "#fef2f2";
-                      textColor = "#991b1b";
-                    }
-                  } else if (isSelected) {
-                    borderColor = "#6366f1";
-                    bg = "#eef2ff";
-                    textColor = "#3730a3";
-                  }
-
-                  return (
-                    <div
-                      key={idx}
-                      onClick={() => {
-                        if (!practicingIsSubmitted) {
-                          setPracticingSelectedOption(idx);
-                        }
-                      }}
-                      style={{
-                        padding: "12px 16px",
-                        borderRadius: "8px",
-                        border: `2px solid ${borderColor}`,
-                        backgroundColor: bg,
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "12px",
-                        cursor: practicingIsSubmitted ? "default" : "pointer",
-                        transition: "all 0.15s ease"
-                      }}
-                    >
-                      <input
-                        type="radio"
-                        name="practice-option"
-                        checked={isSelected}
-                        onChange={() => {
-                          if (!practicingIsSubmitted) {
-                            setPracticingSelectedOption(idx);
-                          }
-                        }}
-                        style={{ cursor: "pointer", width: "16px", height: "16px" }}
-                      />
-                      <span
-                        style={{
-                          width: "22px",
-                          height: "22px",
-                          borderRadius: "50%",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          backgroundColor: isSelected ? "#6366f1" : "#f1f5f9",
-                          color: isSelected ? "#ffffff" : "#475569",
-                          fontSize: "11px",
-                          fontWeight: 700,
-                          flexShrink: 0
-                        }}
-                      >
-                        {String.fromCharCode(65 + idx)}
-                      </span>
-                      <span style={{ fontSize: "13.5px", color: textColor, fontWeight: isSelected || isCorrect ? 600 : 400, flex: 1 }}>
-                        {opt}
-                      </span>
-                      {practicingIsSubmitted && isCorrect && (
-                        <span style={{ fontSize: "11.5px", fontWeight: 700, color: "#10b981", display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                          <Check size={14} strokeWidth={3} /> Correct Answer
-                        </span>
-                      )}
-                      {practicingIsSubmitted && isSelected && !isCorrect && (
-                        <span style={{ fontSize: "11.5px", fontWeight: 700, color: "#ef4444" }}>
-                          ✕ Incorrect
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Score & Detailed Clinical Rationale (After Submit) */}
-              {practicingIsSubmitted && (
-                <div style={{ marginTop: "16px", animation: "fadeIn 0.25s ease" }}>
-                  <div
-                    style={{
-                      padding: "12px 16px",
-                      borderRadius: "8px",
-                      backgroundColor: practicingSelectedOption === practicingQuestion.correctIndex ? "#ecfdf5" : "#fffbeb",
-                      border: `1px solid ${practicingSelectedOption === practicingQuestion.correctIndex ? "#a7f3d0" : "#fde68a"}`,
-                      color: practicingSelectedOption === practicingQuestion.correctIndex ? "#065f46" : "#92400e",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "10px",
-                      marginBottom: "16px",
-                      fontSize: "13px",
-                      fontWeight: 600
-                    }}
-                  >
-                    {practicingSelectedOption === practicingQuestion.correctIndex ? (
-                      <>
-                        <CheckCircle2 size={18} style={{ color: "#10b981" }} />
-                        <span>Correct! You selected the indicated priority nursing action. (+1.0 Point)</span>
-                      </>
-                    ) : (
-                      <>
-                        <AlertCircle size={18} style={{ color: "#f59e0b" }} />
-                        <span>Incorrect. Review the clinical rationale below to reinforce this concept. (0.0 Points)</span>
-                      </>
-                    )}
-                  </div>
-
-                  <div
-                    style={{
-                      backgroundColor: "#f8fafc",
-                      border: "1px solid #e2e8f0",
-                      borderLeft: "4px solid #6366f1",
-                      borderRadius: "8px",
-                      padding: "16px 18px"
-                    }}
-                  >
-                    <strong style={{ display: "block", fontSize: "13px", color: "#4338ca", marginBottom: "6px" }}>
-                      Evidence-Based Clinical Rationale:
-                    </strong>
-                    <p style={{ fontSize: "13px", color: "#334155", lineHeight: "1.6", margin: 0 }}>
-                      {practicingQuestion.rationale}
-                    </p>
-                    <div style={{ marginTop: "10px", fontSize: "11px", color: "#94a3b8" }}>
-                      Reviewed &amp; Approved by {practicingQuestion.author}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Action Buttons */}
-              <div
-                style={{
-                  marginTop: "24px",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  borderTop: "1px solid #f1f5f9",
-                  paddingTop: "16px"
-                }}
-              >
-                <div>
-                  {practicingIsSubmitted ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPracticingSelectedOption(null);
-                        setPracticingIsSubmitted(false);
-                      }}
-                      style={{
-                        padding: "8px 16px",
-                        backgroundColor: "#f1f5f9",
-                        color: "#475569",
-                        border: "1px solid #cbd5e1",
-                        borderRadius: "6px",
-                        fontSize: "12.5px",
-                        fontWeight: 600,
-                        cursor: "pointer"
-                      }}
-                    >
-                      Try Question Again
-                    </button>
-                  ) : (
-                    <span style={{ fontSize: "12px", color: "#94a3b8" }}>
-                      Select an option above and click Submit.
-                    </span>
-                  )}
-                </div>
-
-                <div style={{ display: "flex", gap: "10px" }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPracticingQuestion(null);
-                      setPracticingSelectedOption(null);
-                      setPracticingIsSubmitted(false);
-                    }}
-                    style={{
-                      padding: "8px 18px",
-                      backgroundColor: "#ffffff",
-                      color: "#475569",
-                      border: "1px solid #cbd5e1",
-                      borderRadius: "6px",
-                      fontSize: "13px",
-                      fontWeight: 600,
-                      cursor: "pointer"
-                    }}
-                  >
-                    Close
-                  </button>
-
-                  {!practicingIsSubmitted && (
-                    <button
-                      type="button"
-                      disabled={practicingSelectedOption === null}
-                      onClick={() => setPracticingIsSubmitted(true)}
-                      style={{
-                        padding: "8px 22px",
-                        backgroundColor: practicingSelectedOption === null ? "#cbd5e1" : "#6366f1",
-                        color: "#ffffff",
-                        border: "none",
-                        borderRadius: "6px",
-                        fontSize: "13px",
-                        fontWeight: 700,
-                        cursor: practicingSelectedOption === null ? "not-allowed" : "pointer",
-                        boxShadow: practicingSelectedOption === null ? "none" : "0 4px 12px rgba(99, 102, 241, 0.4)"
-                      }}
-                    >
-                      Submit Answer
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

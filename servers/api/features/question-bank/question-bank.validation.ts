@@ -20,6 +20,22 @@ export const questionInputSchema = z.object({
 });
 
 export const answerInputSchema = z.object({ selectedIndex: z.number().int().min(0) });
+export const createTestInputSchema = z.object({
+  pools: z.array(z.enum(["unused", "learning", "reviewing", "mastered", "bookmarked"])).min(1).max(5),
+  subjectIds: z.array(z.string().trim().min(1).max(80)).max(40),
+  questionCount: z.number().int().min(1).max(150),
+  tutorMode: z.boolean(), timedMode: z.boolean()
+});
+export const testAnswerInputSchema = z.object({ selectedIndices: z.array(z.number().int().min(0)).min(1).max(12), timeSpentSeconds: z.number().int().min(0).max(86_400).default(0) });
+export const questionStatusInputSchema = z.object({
+  status: z.enum(["unused", "learning", "reviewing", "mastered"]), bookmarked: z.boolean().optional()
+});
+export const testStateInputSchema = z.object({
+  status: z.enum(["active", "paused", "completed"]),
+  elapsedSeconds: z.number().int().min(0).max(86_400).optional(),
+  currentQuestionId: z.string().min(1).max(120).optional(),
+  draftSelectedIndices: z.array(z.number().int().min(0)).max(12).optional()
+});
 export const paymentVerificationSchema = z.discriminatedUnion("paymentStatus", [
   z.object({
     paymentStatus: z.literal("paid"),

@@ -1,4 +1,6 @@
-import type { ReactElement } from "react";
+"use client";
+
+import { useState, type ReactElement } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import {
@@ -7,6 +9,7 @@ import {
   GraduationCap, HeartPulse, Home, Menu, Rocket, ShieldCheck, Sparkles,
   Star, Stethoscope, TrendingUp, Trophy, User, Users, Zap
 } from "lucide-react";
+import { AuthCard, type AuthMode } from "@/features/auth";
 
 const quickTools = [
   { icon: CirclePlay, label: "Video Walkthroughs" },
@@ -21,53 +24,78 @@ const studySteps = [
   { number: "03", title: "Review what you learned", text: "Use explanations and resources to guide your next session." }
 ] as const;
 
-const LandingPage = (): ReactElement => (
-  <main className="lp-page">
-    <section className="lp-hero-wrap" id="home">
-      <header className="lp-header">
-        <Link aria-label="NCLEXLab home" className="lp-logo" href="/">
-          <span aria-hidden="true" className="lp-logo-icon">
-            <GraduationCap size={44} />
-            <Stethoscope size={31} />
-          </span>
-          <span className="lp-logo-wordmark">
-            NCLEX<span>Lab</span>
-            <small>Study · Practice · Pass</small>
-          </span>
-        </Link>
-        <nav aria-label="Main navigation" className="lp-nav-links">
-          <a className="lp-nav-active" href="#home"><Home size={15} fill="currentColor" /> Home</a>
-          <a href="#features">Features <ChevronDown size={14} /></a>
-          <a href="#resources">Resources <ChevronDown size={14} /></a>
-          <a href="#student-stories">Reviews</a>
-          <a href="#pricing">Pricing</a>
-          <a href="#faq">FAQ</a>
-        </nav>
-        <div className="lp-header-actions">
-          <Link className="lp-login-pill" href="/student">
-            <span className="lp-login-user-icon"><User size={14} /></span>
-            <span>Log In</span>
+const LandingPage = (): ReactElement => {
+  const [authModalMode, setAuthModalMode] = useState<AuthMode | null>(null);
+
+  return (
+    <main className="lp-page">
+      <section className="lp-hero-wrap" id="home">
+        <header className="lp-header">
+          <Link aria-label="NCLEXLab home" className="lp-logo" href="/">
+            <span aria-hidden="true" className="lp-logo-icon">
+              <GraduationCap size={44} />
+              <Stethoscope size={31} />
+            </span>
+            <span className="lp-logo-wordmark">
+              NCLEX<span>Lab</span>
+              <small>Study · Practice · Pass</small>
+            </span>
           </Link>
-          <Link className="lp-button lp-button-glow lp-header-cta" href="/student">
-            Start Studying Free <ArrowRight size={17} />
-          </Link>
-        </div>
-        <details className="lp-mobile-menu">
-          <summary aria-label="Open navigation"><Menu size={22} /></summary>
-          <nav aria-label="Mobile navigation">
-            <a href="#home">Home</a>
-            <a href="#features">Features</a>
-            <a href="#resources">Resources</a>
+          <nav aria-label="Main navigation" className="lp-nav-links">
+            <a className="lp-nav-active" href="#home"><Home size={15} fill="currentColor" /> Home</a>
+            <a href="#features">Features <ChevronDown size={14} /></a>
+            <a href="#resources">Resources <ChevronDown size={14} /></a>
             <a href="#student-stories">Reviews</a>
             <a href="#pricing">Pricing</a>
             <a href="#faq">FAQ</a>
-            <Link href="/student">Log In</Link>
-            <Link href="/student">Start Studying Free</Link>
           </nav>
-        </details>
-      </header>
+          <div className="lp-header-actions">
+            <button
+              type="button"
+              className="lp-login-pill"
+              onClick={() => setAuthModalMode("login")}
+              style={{ background: "transparent", border: "none", cursor: "pointer" }}
+            >
+              <span className="lp-login-user-icon"><User size={14} /></span>
+              <span>Log In</span>
+            </button>
+            <button
+              type="button"
+              className="lp-button lp-button-glow lp-header-cta"
+              onClick={() => setAuthModalMode("signup")}
+              style={{ cursor: "pointer" }}
+            >
+              Start Studying Free <ArrowRight size={17} />
+            </button>
+          </div>
+          <details className="lp-mobile-menu">
+            <summary aria-label="Open navigation"><Menu size={22} /></summary>
+            <nav aria-label="Mobile navigation">
+              <a href="#home">Home</a>
+              <a href="#features">Features</a>
+              <a href="#resources">Resources</a>
+              <a href="#student-stories">Reviews</a>
+              <a href="#pricing">Pricing</a>
+              <a href="#faq">FAQ</a>
+              <button
+                type="button"
+                onClick={() => setAuthModalMode("login")}
+                style={{ textAlign: "left", background: "none", border: "none", padding: "8px 0", color: "#ffffff", fontSize: "15px", cursor: "pointer" }}
+              >
+                Log In
+              </button>
+              <button
+                type="button"
+                onClick={() => setAuthModalMode("signup")}
+                style={{ textAlign: "left", background: "none", border: "none", padding: "8px 0", color: "#fbbf24", fontWeight: 700, fontSize: "15px", cursor: "pointer" }}
+              >
+                Start Studying Free
+              </button>
+            </nav>
+          </details>
+        </header>
 
-      <div className="lp-hero-grid">
+        <div className="lp-hero-grid">
         <div className="lp-hero-copy">
           <div className="lp-update-pill">
             <Zap size={14} fill="#FBBF24" color="#FBBF24" />
@@ -99,9 +127,14 @@ const LandingPage = (): ReactElement => (
           </p>
 
           <div className="lp-hero-buttons">
-            <Link className="lp-button lp-button-glow lp-btn-start" href="/student">
+            <button
+              type="button"
+              className="lp-button lp-button-glow lp-btn-start"
+              onClick={() => setAuthModalMode("signup")}
+              style={{ cursor: "pointer", border: "none" }}
+            >
               <Rocket size={18} /> Start Studying for Free <ArrowRight size={17} />
-            </Link>
+            </button>
             <a className="lp-button lp-button-outline" href="#how-it-works">
               <CirclePlay size={18} fill="currentColor" /> See How It Works
             </a>
@@ -333,7 +366,21 @@ const LandingPage = (): ReactElement => (
       <div className="lp-footer-column"><strong>NCLEXLab</strong><a href="#student-stories">Our approach</a><a href="#faq">FAQ</a><Link href="/student">Student preview</Link></div>
       <div className="lp-footer-bottom"><span>© 2026 NCLEXLab</span><span>Study · Practice · Grow</span></div>
     </footer>
+
+    {authModalMode && (
+      <div className="auth-modal-backdrop" onClick={() => setAuthModalMode(null)}>
+        <div onClick={(e) => e.stopPropagation()}>
+          <AuthCard
+            initialMode={authModalMode}
+            isModal
+            onClose={() => setAuthModalMode(null)}
+            onSuccess={() => setAuthModalMode(null)}
+          />
+        </div>
+      </div>
+    )}
   </main>
 );
+};
 
 export { LandingPage };

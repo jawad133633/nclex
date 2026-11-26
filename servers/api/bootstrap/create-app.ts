@@ -5,6 +5,7 @@ import type { MongoDbIntegration } from "../integrations/mongodb/types.js";
 import { apiRuntime } from "../constants/index.js";
 import { createHealthRoutes } from "../features/health/index.js";
 import { createQuestionBankRoutes } from "../features/question-bank/index.js";
+import { createStudyScheduleRoutes } from "../features/study-schedule/index.js";
 import { createCorsMiddleware, createErrorHandler, createNotFoundHandler } from "../middleware/index.js";
 
 type AppDependencies = Readonly<{ config: ApiConfig; logger: Logger; database: MongoDbIntegration }>;
@@ -21,7 +22,7 @@ export const createApp = ({ config, logger, database }: AppDependencies): Expres
   const featureRouters = [createHealthRoutes({
     environment: config.environment,
     serviceName: apiRuntime.serviceName
-  }), createQuestionBankRoutes(database, config.adminApiKey)];
+  }), createQuestionBankRoutes(database, config.adminApiKey), createStudyScheduleRoutes(database, config.adminApiKey)];
   for (const featureRouter of featureRouters) app.use(featureRouter);
   app.use(createNotFoundHandler());
   app.use(createErrorHandler({ logger }));

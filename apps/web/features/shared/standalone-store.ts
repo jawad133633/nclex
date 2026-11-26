@@ -17,6 +17,8 @@ export interface StoredStandaloneQuestion {
   locked?: boolean;
   sequence?: number;
   answered?: boolean;
+  poolStatus?: "unused" | "learning" | "reviewing" | "mastered";
+  bookmarked?: boolean;
   assignmentCount?: number;
   assignedStudentIds?: readonly string[];
 }

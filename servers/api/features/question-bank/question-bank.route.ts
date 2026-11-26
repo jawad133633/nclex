@@ -16,5 +16,11 @@ export const createQuestionBankRoutes = (database: MongoDbIntegration, adminApiK
   router.patch("/admin/students/:id/payment", controller.setStudentPayment);
   router.get("/student/questions", controller.studentQuestions);
   router.post("/student/questions/:id/answer", controller.answerQuestion);
+  router.get("/student/test-options", controller.testOptions);
+  router.post("/student/tests", controller.createTest);
+  router.get("/student/tests/:id", controller.getTest);
+  router.post("/student/tests/:id/questions/:questionId/answer", controller.submitTestAnswer);
+  router.patch("/student/tests/:id/state", controller.setTestState);
+  router.patch("/student/questions/:id/status", controller.updateQuestionStatus);
   return router;
 };
